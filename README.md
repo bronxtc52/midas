@@ -32,10 +32,10 @@ endpoint'ов).
 человека, и для Worker'а/демона (единый контур с polling'ом Actions по ADR
 `midas-events-polling-v1`, тот же лимит 5000/час, задачи связываются с PR/ранами).
 Notion/Planka отклонены: стороннее облако / второй сервис в интеграции.
-Настроено 2026-07-03: labels `этап-0`…`этап-6` + `blocked`, milestone `v1`.
-⏳ Project-доска: нужен scope (`gh auth refresh -s project,read:project`), затем
-`gh project create --owner bronxtc52 --title "MIDAS v1"`. Issues раскладываются
-из BACKLOG (t2-3) по его готовности.
+Настроено 2026-07-03: labels `этап-0`…`этап-6` + `blocked`, milestone `v1`,
+Project-доска **[MIDAS v1](https://github.com/users/bronxtc52/projects/3)**
+(привязана к репо; колонки Todo / In Progress / Done, blocked — label'ом).
+Issues раскладываются из BACKLOG (t2-3) по его готовности.
 
 ## Открытые вопросы спеки (маппинг из t2-3)
 
