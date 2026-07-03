@@ -34,7 +34,9 @@ const rubricPath = join(root, 'docs', 'review-rubric.md');
 const rubric = existsSync(rubricPath) ? readFileSync(rubricPath, 'utf8') : '';
 const workRoot = join(dataDir, 'scratch');
 mkdirSync(workRoot, { recursive: true }); // spawn с несуществующим cwd падает как ENOENT «бинаря»
-const remoteUrlOf = (repo) => `https://x-access-token:${ghToken}@github.com/${repo}.git`;
+// Токен НЕ в URL (утекает в error.message git'а и в .git/config) — Worker
+// получает его отдельно и отдаёт git-процессам через GIT_ASKPASS.
+const remoteUrlOf = (repo) => `https://github.com/${repo}.git`;
 
 async function lastPlanComment(repo, n) {
   const comments = await gh.listComments(repo, n);
@@ -49,8 +51,11 @@ async function lastRejectComment(repo, n) {
 
 // Сессии ролей ограничены явным allowlist инструментов: файлы читать/править можно,
 // Bash и сеть — нельзя (Конституция §1: минимальные полномочия, git делает обвязка).
+// GH_TOKEN сессии не выдаётся вовсе — он нужен только обвязке.
+const { GH_TOKEN: _ghTokenHidden, ...sessionEnv } = process.env;
 const claudeRun = (args) => runSession({
   ...args,
+  env: sessionEnv,
   extraArgs: ['--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Glob,Grep,Edit,Write'],
 });
 
@@ -66,12 +71,14 @@ const roles = {
   work: wrapBlocked(async ({ repo, issue, day }) => {
     const plan = await lastPlanComment(repo, issue.number);
     if (!plan) {
-      return runPlanner({ gh, keeper, config, repo, issue, claudeRun, day, workRoot });
+      // issue в coding без плана: fromLabel = coding, иначе blocked-переход
+      // скипается и платная сессия перезапускается каждый tick
+      return runPlanner({ gh, keeper, config, repo, issue, claudeRun, day, workRoot, fromLabel: config.labels.coding });
     }
     const rejectFeedback = await lastRejectComment(repo, issue.number);
     return runWorker({
       gh, keeper, config, repo, issue, plan, rejectFeedback,
-      remoteUrl: remoteUrlOf(repo), workRoot, claudeRun, day,
+      remoteUrl: remoteUrlOf(repo), gitToken: ghToken, workRoot, claudeRun, day,
     });
   }),
   review: async ({ repo, issue, pr, day }) => {
@@ -82,10 +89,17 @@ const roles = {
   },
 };
 
+// Heartbeat независим от tick'а: длинная Worker-сессия (до 30 мин) не должна
+// ронять healthcheck (порог 180 с). Живость процесса ≠ завершённость tick'а.
+const beat = () => writeFileSync(join(dataDir, 'heartbeat'), new Date().toISOString());
+beat();
+setInterval(beat, 30_000).unref();
+
 const daemon = makeDaemon({
   gh, keeper, config, roles,
   log: (m) => console.log(`[midas] ${m}`),
-  heartbeat: () => writeFileSync(join(dataDir, 'heartbeat'), new Date().toISOString()),
+  heartbeat: beat,
+  notify: (kind, msg) => sentry?.captureMessage(`MIDAS ${kind}: ${msg}`, kind === 'tick-error' ? 'error' : 'warning'),
 });
 
 console.log(`[midas] демон стартует: ${config.repos_allowlist.join(', ')}, tick=${config.poll_interval_sec}с`);

@@ -16,6 +16,7 @@ function harness({ issues = [], checks = 'green', transition = { ok: true }, prC
   const calls = [];
   const gh = {
     listUpdatedIssues: async (repo, since) => { calls.push(['list', repo, since]); return issues; },
+    listIssues: async (repo, { label }) => issues.filter(i => i.labels.some(l => l.name === label)),
     getIssue: async (repo, n) => { calls.push(['getIssue', n]); return issues.find(i => i.number === n); },
     transitionState: async (repo, n, from, to) => { calls.push(['transition', n, from, to]); return transition; },
     addComment: async (repo, n, body) => { calls.push(['comment', n, body]); },
@@ -64,6 +65,25 @@ test('дедуп: успешно завершённое действие не п
   await daemon.tick();
   const n2 = calls.filter(c => c[0] === 'role:review').length;
   assert.equal(n2, 1, 'повторный tick не дублирует завершённое ревью');
+});
+
+test('review c blocked-исходом НЕ дедупится: после разблокировки тот же sha ревьюится снова', async () => {
+  const calls = [];
+  const gh = {
+    listUpdatedIssues: async () => [issue(5, 'state:review')],
+    listIssues: async (r, { label }) => (label === 'state:review' ? [issue(5, 'state:review')] : []),
+    getIssue: async (r, n) => issue(5, 'state:review'),
+    transitionState: async () => ({ ok: true }),
+    addComment: async () => {},
+    getPRForBranch: async () => ({ number: 90, head: { sha: 'abc' }, created_at: '2026-07-03T00:00:00Z' }),
+    checksStatus: async () => 'green',
+  };
+  const keeper = makeKeeper(mkdtempSync(join(tmpdir(), 'midas-d-')), { now: () => 't' });
+  const roles = { plan: async () => {}, work: async () => {}, review: async () => { calls.push('review'); return { status: 'blocked' }; } };
+  const daemon = makeDaemon({ gh, keeper, config: CONFIG, roles, log: () => {}, heartbeat: () => {} });
+  await daemon.tick();
+  await daemon.tick();
+  assert.equal(calls.length, 2, 'blocked-ревью не помечено processed — повтор возможен');
 });
 
 test('CI-гейт: красные чеки → возврат в coding с комментарием, ревью не зовётся', async () => {

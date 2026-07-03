@@ -38,16 +38,31 @@ export function makeGh({
     return s.toString() ? `?${s}` : '';
   };
 
+  // Пагинация: одна страница на шумном репо после downtime молча теряет события
+  async function paged(path, params, maxPages = 10) {
+    const out = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const items = await request(`${path}${q({ ...params, per_page: '100', page: String(page) })}`);
+      out.push(...items);
+      if (items.length < 100) break;
+    }
+    return out;
+  }
+
   return {
     request,
 
     listIssues: (repo, { label, since } = {}) =>
-      request(`/repos/${repo}/issues${q({ labels: label, since, state: 'open', per_page: '100' })}`),
+      paged(`/repos/${repo}/issues`, { labels: label, since, state: 'open' }),
 
     async listUpdatedIssues(repo, since) {
-      const items = await request(`/repos/${repo}/issues${q({ since: since ?? undefined, state: 'open', per_page: '100' })}`);
+      const items = await paged(`/repos/${repo}/issues`, { since: since ?? undefined, state: 'open' });
       return items.filter((i) => !i.pull_request);
     },
+
+    removeLabel: (repo, n, label) =>
+      request(`/repos/${repo}/issues/${n}/labels/${encodeURIComponent(label)}`, { method: 'DELETE' })
+        .catch(() => {}), // 404 = лейбла и не было
 
     getIssue: (repo, n) => request(`/repos/${repo}/issues/${n}`),
 

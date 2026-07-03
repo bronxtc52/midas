@@ -2,7 +2,9 @@ import { decide, stateOf } from './statemachine.js';
 
 // Orchestrator: только маршрутизация по машине состояний, никакой интерпретации
 // содержимого задач (Конституция §2). Одна задача за раз (v1).
-export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbeat = () => {}, overlapSec = 120 }) {
+const scrub = (s) => String(s).replace(/x-access-token:[^@]+@/g, '***@');
+
+export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbeat = () => {}, notify = () => {}, overlapSec = 120 }) {
   let timer = null;
   let ticking = false;
 
@@ -33,7 +35,9 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
       return;
     }
     const res = await roles.review({ repo, issue, pr, day });
-    keeper.markProcessed(key);
+    // blocked-исход не помечаем: после ручной разблокировки тот же sha должен
+    // ревьюиться снова (находка ревью №4)
+    if (res?.status !== 'blocked') keeper.markProcessed(key);
     keeper.append({ type: 'action', action: 'review', repo, issue: issue.number, result: res?.status ?? res?.verdict });
   }
 
@@ -43,6 +47,7 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
     if (keeper.costForDay(day) >= config.cost_cap_usd_per_day) {
       log(`дневной кап $${config.cost_cap_usd_per_day} исчерпан — пауза до следующего дня`);
       keeper.append({ type: 'daily-cap-pause', day });
+      notify('daily-cap', `дневной кап $${config.cost_cap_usd_per_day} исчерпан (${day})`);
       return;
     }
 
@@ -52,10 +57,14 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
       const since = cursor
         ? new Date(new Date(cursor).getTime() - overlapSec * 1000).toISOString()
         : null;
-      const briefs = (await gh.listUpdatedIssues(repo, since)).filter((i) => !i.pull_request);
+      const briefs = await gh.listUpdatedIssues(repo, since);
+      // Ожидающие CI review-issue не меняют updated_at и выпадают из since-окна
+      // (starvation) — выбираем их отдельно по лейблу, без since.
+      const reviewing = (await gh.listIssues(repo, { label: config.labels.review })).filter((i) => !i.pull_request);
+      const byNumber = new Map([...briefs, ...reviewing].map((i) => [i.number, i]));
 
       let maxUpdated = cursor;
-      for (const brief of briefs) {
+      for (const brief of byNumber.values()) {
         if (!maxUpdated || new Date(brief.updated_at) > new Date(maxUpdated)) maxUpdated = brief.updated_at;
 
         // fresh-чтение перед решением: лейблы могли смениться после выборки
@@ -94,8 +103,10 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
         try {
           await tick();
         } catch (e) {
-          log(`tick error: ${e.message}`);
-          keeper.append({ type: 'tick-error', error: String(e.message) });
+          // scrub: сообщения git-ошибок могут содержать credential-URL
+          log(`tick error: ${scrub(e.message)}`);
+          keeper.append({ type: 'tick-error', error: scrub(e.message) });
+          notify('tick-error', scrub(e.message));
         } finally {
           ticking = false;
         }

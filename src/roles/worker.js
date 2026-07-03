@@ -1,8 +1,18 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseBlockedFromSession } from '../blocked.js';
 import { makeBlock, capExceeded } from './common.js';
+
+// Токен НЕ встраивается в remote-URL: иначе он утекает в error.message git'а
+// (→ логи, журнал) и оседает в .git/config, откуда его прочтёт LLM-сессия.
+// Вместо этого — GIT_ASKPASS-хелпер: токен живёт только в env git-процессов.
+function gitEnvWithAskpass(workRoot, token) {
+  if (!token) return {};
+  const helper = join(workRoot, '.git-askpass');
+  writeFileSync(helper, '#!/bin/sh\necho "$MIDAS_GIT_TOKEN"\n', { mode: 0o700 });
+  return { GIT_ASKPASS: helper, MIDAS_GIT_TOKEN: token, GIT_TERMINAL_PROMPT: '0' };
+}
 
 function workerPrompt(issue, plan, rejectFeedback) {
   return [
@@ -21,7 +31,7 @@ function workerPrompt(issue, plan, rejectFeedback) {
   ].join('\n');
 }
 
-export async function runWorker({ gh, keeper, config, repo, issue, plan, remoteUrl, workRoot, claudeRun, day, rejectFeedback }) {
+export async function runWorker({ gh, keeper, config, repo, issue, plan, remoteUrl, gitToken, workRoot, claudeRun, day, rejectFeedback }) {
   const task = `${repo}#${issue.number}`;
   const branch = `midas/issue-${issue.number}`;
   const block = makeBlock({ gh, keeper, config, repo, issue, fromLabel: config.labels.coding });
@@ -30,11 +40,12 @@ export async function runWorker({ gh, keeper, config, repo, issue, plan, remoteU
   if (cap) return block(cap);
 
   mkdirSync(workRoot, { recursive: true });
+  const gitEnv = { ...process.env, ...gitEnvWithAskpass(workRoot, gitToken) };
   const cwd = join(workRoot, `issue-${issue.number}`);
   if (existsSync(cwd)) rmSync(cwd, { recursive: true, force: true });
-  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8' });
+  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: gitEnv });
 
-  execFileSync('git', ['clone', remoteUrl, cwd], { encoding: 'utf8' });
+  execFileSync('git', ['clone', remoteUrl, cwd], { encoding: 'utf8', env: gitEnv });
   git(['config', 'user.email', 'midas-bot@adarasoft.com']);
   git(['config', 'user.name', 'midas-bot']);
 
@@ -52,6 +63,7 @@ export async function runWorker({ gh, keeper, config, repo, issue, plan, remoteU
   keeper.addCost({ task, usd: s.costUsd, day });
 
   if (s.timedOut) {
+    keeper.append({ type: 'cost-unknown', task, note: 'сессия убита таймаутом, usage не получен' });
     return block({
       question: 'Сессия Worker убита по таймауту. Дробить задачу?',
       known: `таймаут ${config.session_timeout_sec}с; потрачено $${s.costUsd.toFixed(2)}; ветка ${branch} не запушена`,

@@ -21,9 +21,13 @@ function plannerPrompt(issue) {
   ].join('\n');
 }
 
-export async function runPlanner({ gh, keeper, config, repo, issue, claudeRun, day, workRoot }) {
+// fromLabel параметризован: fallback «в coding без плана» должен блокироваться
+// из своего фактического state, иначе transitionState тихо скипает и демон
+// перезапускает платную сессию каждый tick (находка ревью №3).
+export async function runPlanner({ gh, keeper, config, repo, issue, claudeRun, day, workRoot, fromLabel }) {
   const task = `${repo}#${issue.number}`;
-  const block = makeBlock({ gh, keeper, config, repo, issue, fromLabel: config.labels.planning });
+  const from = fromLabel ?? config.labels.planning;
+  const block = makeBlock({ gh, keeper, config, repo, issue, fromLabel: from });
 
   const cap = capExceeded({ keeper, config, task });
   if (cap) return block(cap);
@@ -37,6 +41,7 @@ export async function runPlanner({ gh, keeper, config, repo, issue, claudeRun, d
   keeper.addCost({ task, usd: s.costUsd, day });
 
   if (s.timedOut) {
+    keeper.append({ type: 'cost-unknown', task, note: 'сессия убита таймаутом, usage не получен' });
     return block({
       question: 'Сессия Planner убита по таймауту. Перезапустить или уточнить ТЗ?',
       known: `таймаут ${config.session_timeout_sec}с; потрачено $${s.costUsd.toFixed(2)}`,
@@ -59,7 +64,9 @@ export async function runPlanner({ gh, keeper, config, repo, issue, claudeRun, d
   }
 
   await gh.addComment(repo, issue.number, s.result);
-  await gh.transitionState(repo, issue.number, config.labels.planning, config.labels.coding);
+  if (from !== config.labels.coding) {
+    await gh.transitionState(repo, issue.number, from, config.labels.coding);
+  }
   keeper.markProcessed(`${task}@planning`);
   return { status: 'planned' };
 }

@@ -24,7 +24,14 @@ export function makeKeeper(dataDir, { now = () => new Date().toISOString() } = {
 
   if (existsSync(journalPath)) {
     for (const line of readFileSync(journalPath, 'utf8').split('\n')) {
-      if (line.trim()) absorb(JSON.parse(line));
+      if (!line.trim()) continue;
+      // Оборванная строка (kill посреди записи, полный диск) не должна
+      // превращать restart:always в вечный crash-loop — скип с warn.
+      try {
+        absorb(JSON.parse(line));
+      } catch {
+        console.warn(`[keeper] пропущена битая строка журнала: ${line.slice(0, 120)}`);
+      }
     }
   }
 

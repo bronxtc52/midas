@@ -12,7 +12,11 @@ const NUM_OVERRIDES = {
 export function loadConfig(root = process.cwd(), env = process.env) {
   const cfg = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'));
   for (const [envKey, cfgKey] of Object.entries(NUM_OVERRIDES)) {
-    if (env[envKey] !== undefined) cfg[cfgKey] = Number(env[envKey]);
+    if (env[envKey] === undefined) continue;
+    const n = Number(env[envKey]);
+    // NaN в капах молча отключил бы все сравнения лимитов
+    if (!Number.isFinite(n)) throw new Error(`${envKey}=${env[envKey]} — не число`);
+    cfg[cfgKey] = n;
   }
   return cfg;
 }

@@ -19,6 +19,7 @@ export function parseVerdict(text) {
 function reviewerPrompt({ issue, plan, diff, rubric }) {
   return [
     'Ты — Reviewer фабрики MIDAS. Проревьюй дифф PR против плана и рубрики.',
+    'Обязательно: пройди КАЖДЫЙ пункт секции DoD плана — непройденный пункт = находка severity high и verdict fail.',
     'Правила (Конституция): код не правишь; вкусовые замечания помечай severity "nit" — они не влияют на вердикт.',
     'Последняя строка ответа — строго:',
     'VERDICT: {"verdict":"pass|fail","findings":[{"severity":"high|med|low|nit","note":"...","file":"..."}]}',
@@ -43,7 +44,11 @@ export async function runReviewer({ gh, keeper, config, repo, issue, pr, plan, r
     return { verdict: 'fail', findings: [{ severity: 'high', note: 'кап стоимости задачи исчерпан до ревью' }], blocked: true };
   }
 
-  const diff = await gh.getPRDiff(repo, pr.number);
+  let diff = await gh.getPRDiff(repo, pr.number);
+  const DIFF_CAP = 200_000; // огромный дифф в argv → E2BIG и невнятный fail
+  if (diff.length > DIFF_CAP) {
+    diff = diff.slice(0, DIFF_CAP) + '\n\n[... дифф усечён обвязкой; это находка severity high: PR слишком большой ...]';
+  }
   const s = await claudeRun({
     prompt: reviewerPrompt({ issue, plan, diff, rubric }),
     cwd: workRoot,

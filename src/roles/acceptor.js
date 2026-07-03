@@ -2,6 +2,7 @@
 // (Конституция §2). Причины reject — только ссылки на fail-находки.
 export async function runAcceptor({ gh, config, repo, issue, verdict }) {
   if (verdict.verdict === 'pass') {
+    await gh.removeLabel?.(repo, issue.number, config.labels.reject); // остаток reject-круга
     await gh.addLabels(repo, issue.number, [config.labels.accept]);
     await gh.transitionState(repo, issue.number, config.labels.review, config.labels.accepted);
     await gh.addComment(repo, issue.number,
