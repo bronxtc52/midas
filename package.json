@@ -1,0 +1,15 @@
+{
+  "name": "midas",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/daemon-main.js"
+  },
+  "dependencies": {
+    "@sentry/node": "10.63.0"
+  }
+}

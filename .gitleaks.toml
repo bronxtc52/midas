@@ -1,0 +1,9 @@
+# Конфиг gitleaks: дефолтные правила + allowlist тестовых фикстур.
+# В tests/ лежат ЗАВЕДОМО ФЕЙКОВЫЕ токены-образцы для тестов секрет-фильтра
+# Council (containsSecret) — это не утечка, а его входные данные.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Фейковые секреты-фикстуры тестов секрет-фильтра"
+paths = ['''tests/.*\.test\.js''']

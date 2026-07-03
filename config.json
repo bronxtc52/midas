@@ -1,0 +1,21 @@
+{
+  "repos_allowlist": ["bronxtc52/midas"],
+  "poll_interval_sec": 45,
+  "cost_cap_usd_per_task": 5,
+  "cost_cap_usd_per_day": 20,
+  "council_slug": "deepseek-direct/deepseek-v4-pro",
+  "council_cap_usd": 1,
+  "session_max_turns": 30,
+  "session_timeout_sec": 1800,
+  "labels": {
+    "ready": "state:ready",
+    "planning": "state:planning",
+    "coding": "state:coding",
+    "review": "state:review",
+    "blocked": "state:blocked",
+    "accepted": "state:accepted",
+    "rejected": "state:rejected",
+    "accept": "midas:accept",
+    "reject": "midas:reject"
+  }
+}
