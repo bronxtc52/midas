@@ -46,6 +46,13 @@ async function lastRejectComment(repo, n) {
   return rejects.length ? rejects[rejects.length - 1].body : null;
 }
 
+// Сессии ролей ограничены явным allowlist инструментов: файлы читать/править можно,
+// Bash и сеть — нельзя (Конституция §1: минимальные полномочия, git делает обвязка).
+const claudeRun = (args) => runSession({
+  ...args,
+  extraArgs: ['--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Glob,Grep,Edit,Write'],
+});
+
 const wrapBlocked = (fn) => async (args) => {
   const res = await fn(args);
   if (res?.status === 'blocked') notifyBlocked(`${args.repo}#${args.issue.number}`, res.question ?? '');
@@ -54,21 +61,21 @@ const wrapBlocked = (fn) => async (args) => {
 
 const roles = {
   plan: wrapBlocked(({ repo, issue, day }) =>
-    runPlanner({ gh, keeper, config, repo, issue, claudeRun: runSession, day, workRoot })),
+    runPlanner({ gh, keeper, config, repo, issue, claudeRun, day, workRoot })),
   work: wrapBlocked(async ({ repo, issue, day }) => {
     const plan = await lastPlanComment(repo, issue.number);
     if (!plan) {
-      return runPlanner({ gh, keeper, config, repo, issue, claudeRun: runSession, day, workRoot });
+      return runPlanner({ gh, keeper, config, repo, issue, claudeRun, day, workRoot });
     }
     const rejectFeedback = await lastRejectComment(repo, issue.number);
     return runWorker({
       gh, keeper, config, repo, issue, plan, rejectFeedback,
-      remoteUrl: remoteUrlOf(repo), workRoot, claudeRun: runSession, day,
+      remoteUrl: remoteUrlOf(repo), workRoot, claudeRun, day,
     });
   }),
   review: async ({ repo, issue, pr, day }) => {
     const plan = await lastPlanComment(repo, issue.number);
-    const verdict = await runReviewer({ gh, keeper, config, repo, issue, pr, plan, rubric, claudeRun: runSession, day, workRoot });
+    const verdict = await runReviewer({ gh, keeper, config, repo, issue, pr, plan, rubric, claudeRun, day, workRoot });
     if (verdict.blocked) return { status: 'blocked' };
     return runAcceptor({ gh, config, repo, issue, verdict });
   },
