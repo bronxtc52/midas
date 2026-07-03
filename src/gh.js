@@ -45,7 +45,7 @@ export function makeGh({
       request(`/repos/${repo}/issues${q({ labels: label, since, state: 'open', per_page: '100' })}`),
 
     async listUpdatedIssues(repo, since) {
-      const items = await request(`/repos/${repo}/issues${q({ since, state: 'open', per_page: '100' })}`);
+      const items = await request(`/repos/${repo}/issues${q({ since: since ?? undefined, state: 'open', per_page: '100' })}`);
       return items.filter((i) => !i.pull_request);
     },
 

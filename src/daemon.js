@@ -43,9 +43,10 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
 
     for (const repo of config.repos_allowlist) {
       const cursor = keeper.getCursor(repo);
+      // Холодный старт: БЕЗ since — GitHub на since=1970 отвечает пустым списком.
       const since = cursor
         ? new Date(new Date(cursor).getTime() - overlapSec * 1000).toISOString()
-        : new Date(0).toISOString();
+        : null;
       const briefs = (await gh.listUpdatedIssues(repo, since)).filter((i) => !i.pull_request);
 
       let maxUpdated = cursor;

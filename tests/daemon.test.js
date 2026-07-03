@@ -85,6 +85,14 @@ test('CI-гейт: pending → ждём следующего tick (ничего 
   assert.ok(h2.calls.some(c => c[0] === 'role:review'));
 });
 
+test('холодный старт (курсора нет) → since=null, БЕЗ эпохи-1970 (GitHub отвечает на неё пустотой)', async () => {
+  const { calls, daemon } = harness({ issues: [issue(1, 'state:ready')] });
+  await daemon.tick();
+  const list = calls.find(c => c[0] === 'list');
+  assert.equal(list[2], null, 'без курсора since не передаётся');
+  assert.ok(calls.some(c => c[0] === 'role:plan'), 'issue подхвачен на холодном старте');
+});
+
 test('курсор: выборка с перекрытием (since раньше курсора), после tick курсор = max(updated_at)', async () => {
   const { calls, daemon, keeper } = harness({ issues: [issue(1, 'state:ready', '2026-07-03T09:30:00Z')] });
   keeper.setCursor('o/r', '2026-07-03T09:00:00Z');
