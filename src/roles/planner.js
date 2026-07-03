@@ -49,9 +49,10 @@ export async function runPlanner({ gh, keeper, config, repo, issue, claudeRun, d
   if (b) return block(b);
 
   if (!s.ok || !validatePlan(s.result)) {
+    keeper.append({ type: 'plan-invalid', task, ok: s.ok, snippet: String(s.result || s.raw).slice(0, 500) });
     return block({
       question: 'План не прошёл валидацию формата (5 обязательных секций). Уточнить ТЗ?',
-      known: 'вывод сессии не содержит обязательных секций плана',
+      known: `ok=${s.ok}; вывод сессии (начало): ${String(s.result || s.raw).slice(0, 300)}`,
       options: ['A) вернуть в state:ready (перезапуск Planner)', 'B) уточнить issue'],
       recommendation: 'B',
     });
