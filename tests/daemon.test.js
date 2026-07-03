@@ -12,14 +12,14 @@ const CONFIG = {
   labels: { ready: 'state:ready', planning: 'state:planning', coding: 'state:coding', review: 'state:review', blocked: 'state:blocked', accepted: 'state:accepted', rejected: 'state:rejected', accept: 'midas:accept', reject: 'midas:reject' },
 };
 
-function harness({ issues = [], checks = 'green', transition = { ok: true } } = {}) {
+function harness({ issues = [], checks = 'green', transition = { ok: true }, prCreatedAt = '2026-07-03T00:00:00Z' } = {}) {
   const calls = [];
   const gh = {
     listUpdatedIssues: async (repo, since) => { calls.push(['list', repo, since]); return issues; },
     getIssue: async (repo, n) => { calls.push(['getIssue', n]); return issues.find(i => i.number === n); },
     transitionState: async (repo, n, from, to) => { calls.push(['transition', n, from, to]); return transition; },
     addComment: async (repo, n, body) => { calls.push(['comment', n, body]); },
-    getPRForBranch: async (repo, branch) => { calls.push(['getPR', branch]); return { number: 90, head: { sha: 'abc', ref: branch }, html_url: 'u' }; },
+    getPRForBranch: async (repo, branch) => { calls.push(['getPR', branch]); return { number: 90, head: { sha: 'abc', ref: branch }, html_url: 'u', created_at: prCreatedAt }; },
     checksStatus: async (repo, sha) => { calls.push(['checks', sha]); return checks; },
   };
   const keeper = makeKeeper(mkdtempSync(join(tmpdir(), 'midas-d-')), { now: () => '2026-07-03T10:00:00Z' });
@@ -91,6 +91,15 @@ test('холодный старт (курсора нет) → since=null, БЕЗ
   const list = calls.find(c => c[0] === 'list');
   assert.equal(list[2], null, 'без курсора since не передаётся');
   assert.ok(calls.some(c => c[0] === 'role:plan'), 'issue подхвачен на холодном старте');
+});
+
+test('CI-гейт: чеков нет — свежий PR ждёт grace-период, старый PR = репо без CI, ревью идёт', async () => {
+  const fresh = harness({ issues: [issue(2, 'state:review')], checks: 'none', prCreatedAt: new Date().toISOString() });
+  await fresh.daemon.tick();
+  assert.ok(!fresh.calls.some(c => c[0] === 'role:review'), 'свежий PR без чеков — ждём');
+  const old = harness({ issues: [issue(2, 'state:review')], checks: 'none', prCreatedAt: '2026-07-03T00:00:00Z' });
+  await old.daemon.tick();
+  assert.ok(old.calls.some(c => c[0] === 'role:review'), 'старый PR без чеков — репо без CI');
 });
 
 test('курсор: выборка с перекрытием (since раньше курсора), после tick курсор = max(updated_at)', async () => {

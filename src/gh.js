@@ -79,10 +79,12 @@ export function makeGh({
 
     getPRDiff: (repo, n) => request(`/repos/${repo}/pulls/${n}`, { raw: true, accept: 'application/vnd.github.v3.diff' }),
 
-    // green | red | pending; отсутствие чеков = green (v1: репо без CI не блокируем)
+    // green | red | pending | none. «none» решает демон: свежий PR — ждать
+    // (Actions регистрирует чеки с лагом), старый — репо без CI, пропускаем.
     async checksStatus(repo, ref) {
       const data = await request(`/repos/${repo}/commits/${ref}/check-runs${q({ per_page: '100' })}`);
       const runs = data.check_runs ?? [];
+      if (runs.length === 0) return 'none';
       const bad = runs.some((r) => r.status === 'completed' && !['success', 'neutral', 'skipped'].includes(r.conclusion));
       if (bad) return 'red';
       if (runs.some((r) => r.status !== 'completed')) return 'pending';

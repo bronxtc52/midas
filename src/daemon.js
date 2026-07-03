@@ -18,7 +18,12 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
     const key = `${repo}#${issue.number}@review:${pr.head.sha}`;
     if (keeper.hasProcessed(key)) return;
 
-    const checks = await gh.checksStatus(repo, pr.head.sha);
+    let checks = await gh.checksStatus(repo, pr.head.sha);
+    if (checks === 'none') {
+      // Гонка регистрации чеков: свежему PR даём grace-период, старый = репо без CI
+      const ageMs = pr.created_at ? Date.now() - new Date(pr.created_at).getTime() : Infinity;
+      checks = ageMs < 180_000 ? 'pending' : 'green';
+    }
     if (checks === 'pending') return; // ждём следующий tick, дедуп не ставим
     if (checks === 'red') {
       await gh.addComment(repo, issue.number,

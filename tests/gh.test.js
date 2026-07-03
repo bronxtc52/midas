@@ -87,5 +87,5 @@ test('createPR и getCheckRuns: green/red/pending', async () => {
   assert.equal(await gh.checksStatus('o/r', 'abc'), 'pending');
   f = mk([]);
   gh = makeGh({ token: 't', fetchImpl: f.impl });
-  assert.equal(await gh.checksStatus('o/r', 'abc'), 'green', 'нет чеков = зелёный (v1)');
+  assert.equal(await gh.checksStatus('o/r', 'abc'), 'none', 'нет чеков = none (решает демон по возрасту PR)');
 });
