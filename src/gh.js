@@ -73,13 +73,14 @@ export function makeGh({
     addLabels: (repo, n, labels) => request(`/repos/${repo}/issues/${n}/labels`, { method: 'POST', body: { labels } }),
 
     // Optimistic-переход: свежее чтение → ожидаемый state не совпал → skipped
-    // (гонка с человеком/другим процессом), лейблы не переписываем.
+    // (гонка с человеком/другим процессом). Хирургически: DELETE from + POST to,
+    // НЕ PUT всего списка — иначе стирается чужой лейбл, добавленный в окно гонки.
     async transitionState(repo, n, from, to) {
       const issue = await request(`/repos/${repo}/issues/${n}`);
       const current = stateOf(issue.labels);
       if (current !== from) return { skipped: true, current };
-      const rest = issue.labels.map((l) => l.name).filter((name) => name !== from);
-      await request(`/repos/${repo}/issues/${n}/labels`, { method: 'PUT', body: { labels: [...rest, to] } });
+      await request(`/repos/${repo}/issues/${n}/labels/${encodeURIComponent(from)}`, { method: 'DELETE' }).catch(() => {});
+      await request(`/repos/${repo}/issues/${n}/labels`, { method: 'POST', body: { labels: [to] } });
       return { ok: true };
     },
 

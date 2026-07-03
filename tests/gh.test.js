@@ -42,16 +42,19 @@ test('transitionState: optimistic — state сменился между опро
   assert.ok(!calls.some((c) => c.method === 'PUT'), 'labels не переписаны при гонке');
 });
 
-test('transitionState: совпало → заменяет только state-лейбл, прочие сохраняет', async () => {
+test('transitionState: совпало → хирургически DELETE from + POST to, чужие лейблы не переписываются', async () => {
   const { impl, calls } = fakeFetch([
     { match: (u, m) => m === 'GET' && /issues\/7$/.test(u), res: { status: 200, json: { number: 7, labels: [{ name: 'bug' }, { name: 'state:ready' }] } } },
-    { match: (u, m) => m === 'PUT' && /issues\/7\/labels$/.test(u), res: { status: 200, json: [] } },
+    { match: (u, m) => m === 'DELETE', res: { status: 200, json: {} } },
+    { match: (u, m) => m === 'POST' && /issues\/7\/labels$/.test(u), res: { status: 200, json: [] } },
   ]);
   const gh = makeGh({ token: 't', fetchImpl: impl });
   const r = await gh.transitionState('o/r', 7, 'state:ready', 'state:planning');
   assert.deepEqual(r, { ok: true });
-  const put = calls.find((c) => c.method === 'PUT');
-  assert.deepEqual(put.body.labels.sort(), ['bug', 'state:planning']);
+  assert.ok(calls.some((c) => c.method === 'DELETE' && /labels\/state%3Aready$/.test(c.url)), 'снят только from-лейбл');
+  const post = calls.find((c) => c.method === 'POST');
+  assert.deepEqual(post.body.labels, ['state:planning']);
+  assert.ok(!calls.some((c) => c.method === 'PUT'), 'PUT всего списка не используется');
 });
 
 test('rate-limit: 403 c remaining=0 → ждёт до reset (не дольше капа) и ретраит один раз', async () => {

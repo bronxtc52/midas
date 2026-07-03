@@ -40,7 +40,8 @@ export async function runWorker({ gh, keeper, config, repo, issue, plan, remoteU
   if (cap) return block(cap);
 
   mkdirSync(workRoot, { recursive: true });
-  const gitEnv = { ...process.env, ...gitEnvWithAskpass(workRoot, gitToken) };
+  const { GH_TOKEN: _hidden, ...envBase } = process.env; // git'у хватает askpass-токена
+  const gitEnv = { ...envBase, ...gitEnvWithAskpass(workRoot, gitToken) };
   const cwd = join(workRoot, `issue-${issue.number}`);
   if (existsSync(cwd)) rmSync(cwd, { recursive: true, force: true });
   const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: gitEnv });

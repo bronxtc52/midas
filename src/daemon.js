@@ -65,6 +65,13 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
 
       let maxUpdated = cursor;
       for (const brief of byNumber.values()) {
+        // Дневной кап перепроверяется на каждой задаче: одна tick-пачка
+        // не должна прошивать лимит насквозь
+        if (keeper.costForDay(day) >= config.cost_cap_usd_per_day) {
+          keeper.append({ type: 'daily-cap-pause', day });
+          notify('daily-cap', `дневной кап $${config.cost_cap_usd_per_day} исчерпан посреди tick (${day})`);
+          break;
+        }
         if (!maxUpdated || new Date(brief.updated_at) > new Date(maxUpdated)) maxUpdated = brief.updated_at;
 
         // fresh-чтение перед решением: лейблы могли смениться после выборки
