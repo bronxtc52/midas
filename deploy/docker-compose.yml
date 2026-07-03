@@ -1,3 +1,5 @@
+name: midas
+
 services:
   midas:
     build:
