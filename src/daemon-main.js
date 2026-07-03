@@ -1,4 +1,4 @@
-import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from './config.js';
 import { makeKeeper } from './keeper.js';
@@ -33,6 +33,7 @@ const notifyBlocked = (task, question) => {
 const rubricPath = join(root, 'docs', 'review-rubric.md');
 const rubric = existsSync(rubricPath) ? readFileSync(rubricPath, 'utf8') : '';
 const workRoot = join(dataDir, 'scratch');
+mkdirSync(workRoot, { recursive: true }); // spawn с несуществующим cwd падает как ENOENT «бинаря»
 const remoteUrlOf = (repo) => `https://x-access-token:${ghToken}@github.com/${repo}.git`;
 
 async function lastPlanComment(repo, n) {

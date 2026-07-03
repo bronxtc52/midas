@@ -23,9 +23,9 @@ export function runSession({
     }, timeoutSec * 1000);
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
-    child.on('error', () => {
+    child.on('error', (e) => {
       clearTimeout(timer);
-      resolve({ ok: false, timedOut: false, costUsd: 0, result: '', raw: `spawn error: ${bin}` });
+      resolve({ ok: false, timedOut: false, costUsd: 0, result: '', raw: `spawn error (${e.code}): bin=${bin} cwd=${cwd}` });
     });
     child.on('close', () => {
       clearTimeout(timer);
