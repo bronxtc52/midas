@@ -16,6 +16,8 @@
     "accepted": "state:accepted",
     "rejected": "state:rejected",
     "accept": "midas:accept",
-    "reject": "midas:reject"
+    "reject": "midas:reject",
+    "awaiting_approval": "state:awaiting-approval",
+    "gate_plan": "gate:plan"
   }
 }
