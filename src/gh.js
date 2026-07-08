@@ -75,6 +75,9 @@ export function makeGh({
     async getDefaultBranch(repo) {
       if (defaultBranchCache.has(repo)) return defaultBranchCache.get(repo);
       const data = await request(`/repos/${repo}`);
+      // Пустой default_branch НЕ кэшируем: иначе `origin/undefined` в rev-list →
+      // git-фейл → вечный tick-error-ретрай. Бросаем — ретрай на следующем тике.
+      if (!data.default_branch) throw new Error(`GitHub /repos/${repo}: пустой default_branch`);
       defaultBranchCache.set(repo, data.default_branch);
       return data.default_branch;
     },

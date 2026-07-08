@@ -6,7 +6,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test tests/*.test.js",
     "start": "node src/daemon-main.js"
   },
   "dependencies": {
