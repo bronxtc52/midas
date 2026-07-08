@@ -38,6 +38,10 @@ export function makeGh({
     return s.toString() ? `?${s}` : '';
   };
 
+  // Дефолт-ветка репо кэшируется процессно: разные репо флота на master vs main,
+  // а сама дефолт-ветка меняется крайне редко → одного запроса на репо достаточно.
+  const defaultBranchCache = new Map();
+
   // Пагинация: одна страница на шумном репо после downtime молча теряет события
   async function paged(path, params, maxPages = 10) {
     const out = [];
@@ -65,6 +69,15 @@ export function makeGh({
         .catch(() => {}), // 404 = лейбла и не было
 
     getIssue: (repo, n) => request(`/repos/${repo}/issues/${n}`),
+
+    // База PR и точка отсчёта диффа — не хардкодим main: определяем дефолт-ветку
+    // целевого репо (server-watchdog на master, midas на main). Кэш — см. выше.
+    async getDefaultBranch(repo) {
+      if (defaultBranchCache.has(repo)) return defaultBranchCache.get(repo);
+      const data = await request(`/repos/${repo}`);
+      defaultBranchCache.set(repo, data.default_branch);
+      return data.default_branch;
+    },
 
     listComments: (repo, n) => request(`/repos/${repo}/issues/${n}/comments${q({ per_page: '100' })}`),
 

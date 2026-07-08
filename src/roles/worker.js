@@ -50,6 +50,11 @@ export async function runWorker({ gh, keeper, config, repo, issue, plan, remoteU
   git(['config', 'user.email', 'midas-bot@adarasoft.com']);
   git(['config', 'user.name', 'midas-bot']);
 
+  // Дефолт-ветка репо (не хардкод main) — база PR и точка отсчёта диффа свежей ветки.
+  // git clone уже чекаутит её, midas/issue-N создаётся от неё; здесь она нужна лишь
+  // для ahead-count свежей ветки и base создаваемого PR.
+  const defaultBranch = await gh.getDefaultBranch(repo);
+
   // Ветка уже есть (reject-круг или упавший прошлый заход) — продолжаем её.
   const existing = git(['ls-remote', '--heads', 'origin', branch]).trim();
   if (existing) git(['checkout', '-b', branch, `origin/${branch}`]);
@@ -79,7 +84,7 @@ export async function runWorker({ gh, keeper, config, repo, issue, plan, remoteU
   git(['add', '-A']);
   const dirty = git(['status', '--porcelain']).trim();
   if (dirty) git(['commit', '-m', `midas: issue #${issue.number} — ${issue.title}`]);
-  const baseRef = existing ? `origin/${branch}` : 'origin/main';
+  const baseRef = existing ? `origin/${branch}` : `origin/${defaultBranch}`;
   const ahead = Number(git(['rev-list', '--count', `${baseRef}..HEAD`]).trim());
   if (!dirty && ahead === 0) {
     return block({
@@ -98,7 +103,7 @@ export async function runWorker({ gh, keeper, config, repo, issue, plan, remoteU
   const ensuredPr = pr ?? await gh.createPR(repo, {
     title: `midas: ${issue.title} (#${issue.number})`,
     head: branch,
-    base: 'main',
+    base: defaultBranch,
     body: `Closes #${issue.number}\n\nПлан — в issue (комментарий Planner'а). DoD — по плану, проверяет Acceptor.`,
   });
 

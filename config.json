@@ -1,5 +1,5 @@
 {
-  "repos_allowlist": ["bronxtc52/midas"],
+  "repos_allowlist": ["bronxtc52/midas", "bronxtc52/server-watchdog"],
   "poll_interval_sec": 45,
   "cost_cap_usd_per_task": 5,
   "cost_cap_usd_per_day": 20,
