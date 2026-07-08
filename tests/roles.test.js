@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeKeeper } from '../src/keeper.js';
-import { runPlanner, validatePlan } from '../src/roles/planner.js';
+import { runPlanner, validatePlan, extractGoal } from '../src/roles/planner.js';
 import { runWorker } from '../src/roles/worker.js';
 import { parseVerdict } from '../src/roles/reviewer.js';
 import { runAcceptor } from '../src/roles/acceptor.js';
@@ -32,6 +32,15 @@ const PLAN5 = '## Цель\nx\n## Файлы-объекты\ny\n## Шаги\nz\n
 test('validatePlan: 5 секций обязательны', () => {
   assert.equal(validatePlan(PLAN5), true);
   assert.equal(validatePlan('## Цель\nx\n## Шаги\nz'), false);
+});
+
+test('extractGoal: краевые случаи (нет секции / пустая / многострочная / срез ≤200)', () => {
+  assert.equal(extractGoal('## Цель\nсделать X\n## Шаги\nz'), 'сделать X');
+  assert.equal(extractGoal('нет секции цели вовсе'), '');
+  assert.equal(extractGoal(''), '');
+  assert.equal(extractGoal('## Цель\n\n## Шаги\nz'), '', 'пустая цель до следующей секции → пусто');
+  assert.equal(extractGoal('## Цель\n\nреальная цель\nвторая строка'), 'реальная цель', 'первая непустая строка');
+  assert.equal(extractGoal('## Цель\n' + 'a'.repeat(300)), 'a'.repeat(200), 'срез ≤200 символов');
 });
 
 test('planner: успех → план-комментарий + переход в coding + учёт стоимости', async () => {

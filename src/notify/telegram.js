@@ -13,6 +13,12 @@ function issueNoOf(task) {
   return m ? m[1] : '?';
 }
 
+// owner/repo из task-строки "owner/repo#5" (fallback — настроенный дефолт).
+function repoOf(task, fallback) {
+  const m = /^(.+)#\d+\s*$/.exec(String(task || ''));
+  return m ? m[1] : fallback;
+}
+
 // Ссылка на issue в GitHub (owner кликает — видит заголовок/тред).
 function issueUrl(repo, n) {
   return `https://github.com/${repo}/issues/${n}`;
@@ -27,7 +33,7 @@ export function eventToMessage(event, { monUrl = 'https://mon.adarasoft.com', re
     case 'work-done': {
       const n = issueNoOf(event.task);
       const pr = event.pr ? ` (PR #${event.pr})` : '';
-      return `🔨 #${n}: код готов${pr} → ревью\n${issueUrl(repo, n)}`;
+      return `🔨 #${n}: код готов${pr} → ревью\n${issueUrl(repoOf(event.task, repo), n)}`;
     }
 
     case 'awaiting-approval': {
@@ -40,7 +46,7 @@ export function eventToMessage(event, { monUrl = 'https://mon.adarasoft.com', re
     case 'blocked': {
       const n = issueNoOf(event.task);
       const q = event.question ? `: ${event.question}` : '';
-      return `🚧 #${n} заблокировано${q}\n${issueUrl(repo, n)}`;
+      return `🚧 #${n} заблокировано${q}\n${issueUrl(repoOf(event.task, repo), n)}`;
     }
 
     case 'ci-gate-red':
@@ -76,12 +82,17 @@ export function eventToMessage(event, { monUrl = 'https://mon.adarasoft.com', re
 // в лог/сообщения не попадает.
 export function makeTelegramNotifier({ token, chatId, monUrl, repo, fetch = globalThis.fetch, log = () => {} }) {
   const enabled = Boolean(token && chatId);
+  // Токен сидит в пути URL Bot API — гарантируем, что он не утечёт ни в один log.
+  const scrub = (s) => (token ? String(s).split(token).join('***') : String(s));
 
   async function onEvent(event) {
     if (!enabled) return;
-    const text = eventToMessage(event, { monUrl, repo });
-    if (!text) return;
+    // Весь блок под try: onEvent — async и вызывается fire-and-forget, поэтому любой
+    // бросок (в т.ч. будущий из eventToMessage) должен гаситься ЗДЕСЬ, а не всплывать
+    // unhandledRejection (try/catch подписчика в keeper ловит только синхронные throw).
     try {
+      const text = eventToMessage(event, { monUrl, repo });
+      if (!text) return;
       const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -93,7 +104,7 @@ export function makeTelegramNotifier({ token, chatId, monUrl, repo, fetch = glob
       }
     } catch (e) {
       // Никогда не пробрасываем: сбой Telegram не должен ломать демон.
-      log(`telegram notify error: ${e.message}`);
+      log(`telegram notify error: ${scrub(e.message)}`);
     }
   }
 
