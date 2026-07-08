@@ -16,7 +16,7 @@ const CONFIG = {
   labels: { ready: 'midas:state:ready', planning: 'midas:state:planning', coding: 'midas:state:coding', review: 'midas:state:review', blocked: 'midas:state:blocked', accepted: 'midas:state:accepted', rejected: 'midas:state:rejected', accept: 'midas:accept', reject: 'midas:reject', awaiting_approval: 'midas:state:awaiting-approval', gate_plan: 'midas:gate:plan' },
 };
 
-function ghStub() {
+function ghStub(defaultBranch = 'main') {
   const calls = [];
   return {
     calls,
@@ -24,6 +24,7 @@ function ghStub() {
     transitionState: async (...a) => { calls.push(['transitionState', ...a]); return { ok: true }; },
     addLabels: async (...a) => { calls.push(['addLabels', ...a]); },
     createPR: async (...a) => { calls.push(['createPR', ...a]); return { number: 99, html_url: 'u' }; },
+    getDefaultBranch: async (...a) => { calls.push(['getDefaultBranch', ...a]); return defaultBranch; },
   };
 }
 const keeper = () => makeKeeper(mkdtempSync(join(tmpdir(), 'midas-k-')), { now: () => '2026-07-03T10:00:00Z' });
@@ -166,8 +167,36 @@ test('worker: интеграция с локальным git — ветка, к�
   assert.match(ls, /refs\/heads\/midas\/issue-3/, 'ветка запушена');
   const pr = gh.calls.find(c => c[0] === 'createPR');
   assert.equal(pr[2].head, 'midas/issue-3');
+  assert.equal(pr[2].base, 'main', 'PR base = дефолт-ветка репо (main)');
   assert.match(pr[2].body, /#3/);
   assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'midas:state:coding' && c[4] === 'midas:state:review'));
+});
+
+test('worker: репо на master → PR base master, дифф от origin/master (мультирепо, не падает на origin/main)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'midas-wm-'));
+  const bare = join(root, 'remote.git');
+  mkdirSync(bare);
+  execFileSync('git', ['init', '--bare', '-b', 'master', bare]);
+  const seed = join(root, 'seed');
+  execFileSync('git', ['clone', bare, seed]);
+  execFileSync('git', ['-C', seed, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init']);
+  execFileSync('git', ['-C', seed, 'push', 'origin', 'master']);
+
+  const gh = ghStub('master'); const k = keeper();
+  const r = await runWorker({
+    gh, keeper: k, config: CONFIG, repo: 'o/sw',
+    issue: { number: 50, title: 'фикс', body: '' }, plan: PLAN5,
+    remoteUrl: bare, workRoot: join(root, 'work'), day: '2026-07-03',
+    claudeRun: async ({ cwd }) => {
+      execFileSync('bash', ['-c', 'echo fix > result.txt'], { cwd });
+      return { ok: true, result: 'готово', costUsd: 0.2, timedOut: false };
+    },
+  });
+  assert.equal(r.status, 'review');
+  const ls = execFileSync('git', ['ls-remote', '--heads', bare], { encoding: 'utf8' });
+  assert.match(ls, /refs\/heads\/midas\/issue-50/, 'ветка запушена (ahead-count от origin/master не упал)');
+  const pr = gh.calls.find(c => c[0] === 'createPR');
+  assert.equal(pr[2].base, 'master', 'PR base = дефолт-ветка master');
 });
 
 test('worker: сессия не изменила файлы → blocked, PR не создаётся', async () => {

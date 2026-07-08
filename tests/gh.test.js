@@ -92,3 +92,22 @@ test('createPR и getCheckRuns: green/red/pending', async () => {
   gh = makeGh({ token: 't', fetchImpl: f.impl });
   assert.equal(await gh.checksStatus('o/r', 'abc'), 'none', 'нет чеков = none (решает демон по возрасту PR)');
 });
+
+test('getDefaultBranch: возвращает default_branch из GET /repos/{repo}', async () => {
+  const { impl, calls } = fakeFetch([
+    { match: (u, m) => m === 'GET' && /\/repos\/o\/r$/.test(u), res: { status: 200, json: { default_branch: 'master' } } },
+  ]);
+  const gh = makeGh({ token: 't', fetchImpl: impl });
+  assert.equal(await gh.getDefaultBranch('o/r'), 'master');
+  assert.equal(calls.length, 1);
+});
+
+test('getDefaultBranch: кэш — второй вызов того же repo без повторного запроса', async () => {
+  const { impl, calls } = fakeFetch([
+    { match: (u, m) => m === 'GET' && /\/repos\/o\/r$/.test(u), res: { status: 200, json: { default_branch: 'main' } } },
+  ]);
+  const gh = makeGh({ token: 't', fetchImpl: impl });
+  await gh.getDefaultBranch('o/r');
+  await gh.getDefaultBranch('o/r');
+  assert.equal(calls.length, 1, 'один сетевой запрос на два вызова (кэш)');
+});
