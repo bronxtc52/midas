@@ -162,6 +162,22 @@ gh issue edit <N> -R bronxtc52/midas --remove-label state:blocked --add-label st
 jq 'select(.type=="cost")' data/journal.jsonl
 ```
 
+## Telegram-отчёты владельцу (notify-only)
+
+Фабрика шлёт владельцу **краткие** сообщения о ходе конвейера в личный Telegram-чат
+(бот **server-watchdog**): план готов → кодинг, PR открыт → ревью, принято, отклонено,
+`blocked` (с вопросом), CI-красный, дневной кап, tick-error. Для задач с approval-гейтом
+(`midas:gate:plan`) сообщение `awaiting-approval` — это **запрос одобрения**: краткая цель
+плана + ссылка на **mon** (кнопки Approve/Reject там же, mon-портал).
+
+- Только **исходящий** канал (тип B): бот ничего не слушает — ни кнопок, ни команд, ни
+  вебхуков из чата. Approve/reject физически происходит в mon web UI за сессией.
+- Отдельный секрет не заводится: `deploy/fetch-env.sh` тянет существующие
+  `server-watchdog--production--TELEGRAM-BOT-TOKEN`/`--CHAT-ID` в env
+  `MIDAS_TELEGRAM_BOT_TOKEN`/`_CHAT_ID`. Пусто → нотификатор **молча выключен** (no-op).
+- Реализация: `src/notify/telegram.js` (подписчик журнала `keeper.onAppend`), plain text
+  без `parse_mode`. `MIDAS_MON_URL` переопределяет ссылку (def `https://mon.adarasoft.com`).
+
 ## Безопасность (почему фабрике можно доверять ветку, но не main)
 
 - LLM-сессии получают только инструменты **Read/Glob/Grep/Edit/Write** — ни Bash,

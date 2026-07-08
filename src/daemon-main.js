@@ -9,11 +9,24 @@ import { runPlanner } from './roles/planner.js';
 import { runWorker } from './roles/worker.js';
 import { runReviewer } from './roles/reviewer.js';
 import { runAcceptor } from './roles/acceptor.js';
+import { makeTelegramNotifier } from './notify/telegram.js';
 
 const root = process.cwd();
 const config = loadConfig(root);
 const dataDir = process.env.MIDAS_DATA_DIR || join(root, 'data');
-const keeper = makeKeeper(dataDir);
+
+// Owner-notify (server-watchdog бот): краткие отчёты о ходе конвейера владельцу.
+// No-op без токена/чата. Тип B (только исходящий sendMessage) — см. notify/telegram.js.
+const telegram = makeTelegramNotifier({
+  token: process.env.MIDAS_TELEGRAM_BOT_TOKEN,
+  chatId: process.env.MIDAS_TELEGRAM_CHAT_ID,
+  monUrl: process.env.MIDAS_MON_URL || 'https://mon.adarasoft.com',
+  repo: config.repos_allowlist[0],
+  log: (m) => console.log(`[midas] ${m}`),
+});
+// Журнал — шина событий: подписываем нотификатор на append (реплей истории при
+// старте его не триггерит). fire-and-forget: доставку не ждём, ошибки внутри проглочены.
+const keeper = makeKeeper(dataDir, { onAppend: (e) => { telegram.onEvent(e); } });
 
 const ghToken = process.env.GH_TOKEN;
 if (!ghToken) throw new Error('GH_TOKEN отсутствует — deploy/fetch-env.sh не отработал?');

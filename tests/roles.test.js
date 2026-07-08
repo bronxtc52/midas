@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeKeeper } from '../src/keeper.js';
-import { runPlanner, validatePlan } from '../src/roles/planner.js';
+import { runPlanner, validatePlan, extractGoal } from '../src/roles/planner.js';
 import { runWorker } from '../src/roles/worker.js';
 import { parseVerdict } from '../src/roles/reviewer.js';
 import { runAcceptor } from '../src/roles/acceptor.js';
@@ -34,6 +34,15 @@ test('validatePlan: 5 секций обязательны', () => {
   assert.equal(validatePlan('## Цель\nx\n## Шаги\nz'), false);
 });
 
+test('extractGoal: краевые случаи (нет секции / пустая / многострочная / срез ≤200)', () => {
+  assert.equal(extractGoal('## Цель\nсделать X\n## Шаги\nz'), 'сделать X');
+  assert.equal(extractGoal('нет секции цели вовсе'), '');
+  assert.equal(extractGoal(''), '');
+  assert.equal(extractGoal('## Цель\n\n## Шаги\nz'), '', 'пустая цель до следующей секции → пусто');
+  assert.equal(extractGoal('## Цель\n\nреальная цель\nвторая строка'), 'реальная цель', 'первая непустая строка');
+  assert.equal(extractGoal('## Цель\n' + 'a'.repeat(300)), 'a'.repeat(200), 'срез ≤200 символов');
+});
+
 test('planner: успех → план-комментарий + переход в coding + учёт стоимости', async () => {
   const gh = ghStub(); const k = keeper();
   const r = await runPlanner({ gh, keeper: k, config: CONFIG, repo: 'o/r', issue: { number: 5, title: 't', body: 'b' }, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.1, timedOut: false }), day: '2026-07-03' });
@@ -51,6 +60,24 @@ test('planner: midas:gate:plan + from=planning → awaiting-approval (гейт),
   assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'midas:state:planning' && c[4] === 'midas:state:awaiting-approval'), 'флип в awaiting-approval');
   assert.ok(!gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:coding'), 'НЕ ушёл сразу в coding');
   assert.ok(gh.calls.some(c => c[0] === 'addComment' && c[3].includes('## Цель')), 'план опубликован');
+});
+
+test('planner: gated-задача пишет журнал-событие awaiting-approval с title и goal (для Telegram-пинга)', async () => {
+  const gh = ghStub(); const k = keeper();
+  const issue = { number: 5, title: 'Моя задача', body: 'b', labels: [{ name: 'midas:state:planning' }, { name: 'midas:gate:plan' }] };
+  await runPlanner({ gh, keeper: k, config: CONFIG, repo: 'o/r', issue, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.1, timedOut: false }), day: '2026-07-03' });
+  const ev = k.readAll().find((e) => e.type === 'awaiting-approval');
+  assert.ok(ev, 'журнал содержит событие awaiting-approval');
+  assert.equal(ev.title, 'Моя задача');
+  assert.equal(ev.goal, 'x', 'goal извлечён из секции ## Цель плана (PLAN5)');
+  assert.equal(ev.issue, 5);
+});
+
+test('planner: НЕ gated-задача НЕ пишет журнал-событие awaiting-approval', async () => {
+  const gh = ghStub(); const k = keeper();
+  const issue = { number: 6, title: 't', body: 'b', labels: [{ name: 'midas:state:planning' }] };
+  await runPlanner({ gh, keeper: k, config: CONFIG, repo: 'o/r', issue, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.1, timedOut: false }), day: '2026-07-03' });
+  assert.ok(!k.readAll().some((e) => e.type === 'awaiting-approval'), 'без gate:plan — нет спец-события');
 });
 
 test('planner: labels без midas:gate:plan → coding как раньше (регресс автономии)', async () => {

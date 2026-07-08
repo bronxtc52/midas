@@ -7,6 +7,19 @@ export function validatePlan(text) {
   return SECTIONS.every((s) => (text || '').includes(s));
 }
 
+// Первая непустая строка под секцией «## Цель» (для краткого Telegram-пинга approve).
+export function extractGoal(plan) {
+  const lines = String(plan || '').split('\n');
+  const idx = lines.findIndex((l) => l.trim().startsWith('## Цель'));
+  if (idx === -1) return '';
+  for (let i = idx + 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t.startsWith('## ')) break; // дошли до следующей секции — цели нет
+    if (t) return t.slice(0, 200);
+  }
+  return '';
+}
+
 function plannerPrompt(issue) {
   return [
     'Ты — Planner фабрики MIDAS. Составь план реализации по issue ниже.',
@@ -73,6 +86,11 @@ export async function runPlanner({ gh, keeper, config, repo, issue, claudeRun, d
   const target = gated ? config.labels.awaiting_approval : config.labels.coding;
   if (from !== target) {
     await gh.transitionState(repo, issue.number, from, target);
+  }
+  if (gated) {
+    // Спец-событие для owner-notify: несёт title + Цель, чтобы Telegram-пинг
+    // «ждёт одобрения» не обращался к GitHub из нотификатора (см. notify/telegram.js).
+    keeper.append({ type: 'awaiting-approval', task, issue: issue.number, title: issue.title, goal: extractGoal(s.result) });
   }
   keeper.markProcessed(`${task}@planning`);
   return { status: gated ? 'awaiting-approval' : 'planned' };
