@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Create/update the MIDAS state-machine labels on bronxtc52/midas.
+# Create/update the MIDAS state-machine labels on a repo (default bronxtc52/midas).
 # Idempotent: gh label create --force overwrites color/description if the label exists.
-# Usage: ./scripts/bootstrap-labels.sh
+# Usage: ./scripts/bootstrap-labels.sh [owner/repo]   e.g. ./scripts/bootstrap-labels.sh bronxtc52/server-watchdog
 set -euo pipefail
 
-REPO="bronxtc52/midas"
+REPO="${1:-bronxtc52/midas}"
 
 # state:* — shades of blue, darker = further along the pipeline.
 gh label create "midas:state:ready"     --repo "$REPO" --color "C5DEF5" --description "Issue ready for Planner"        --force
