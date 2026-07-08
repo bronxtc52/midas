@@ -57,6 +57,17 @@ export function eventToMessage(event, { monUrl = 'https://mon.adarasoft.com', re
       return `🚧 #${n} заблокировано${q}\n${issueUrl(repoOf(event.task, repo), n)}`;
     }
 
+    case 'merged': {
+      // Задачу смержил владелец (MIDAS не мержит/не деплоит). Health — снимок ЖИВОСТИ
+      // сервиса сейчас, НЕ подтверждение деплоя: формулировка строго про «сервис отвечает».
+      const n = event.issue ?? '?';
+      const r = event.repo || repo;
+      const link = event.pr ? prUrl(r, event.pr) : issueUrl(r, n);
+      const prTxt = event.pr ? ` (PR #${event.pr} смержен)` : '';
+      const healthLine = event.health || 'не настроен';
+      return `✅ Задача #${n} зашипена${prTxt}.\n${link}\nСервис ${r}: ${healthLine}`;
+    }
+
     case 'ci-gate-red':
       return `⛔ #${event.issue} CI красный → возврат в кодинг\n${issueUrl(event.repo || repo, event.issue)}`;
 

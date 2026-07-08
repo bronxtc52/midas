@@ -3,6 +3,9 @@
   "poll_interval_sec": 45,
   "cost_cap_usd_per_task": 5,
   "cost_cap_usd_per_day": 20,
+  "health_urls": {
+    "bronxtc52/server-watchdog": "https://mon.adarasoft.com/"
+  },
   "council_slug": "deepseek-direct/deepseek-v4-pro",
   "council_cap_usd": 1,
   "session_max_turns": 30,
