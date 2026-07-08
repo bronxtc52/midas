@@ -53,6 +53,24 @@ test('planner: midas:gate:plan + from=planning → awaiting-approval (гейт),
   assert.ok(gh.calls.some(c => c[0] === 'addComment' && c[3].includes('## Цель')), 'план опубликован');
 });
 
+test('planner: gated-задача пишет журнал-событие awaiting-approval с title и goal (для Telegram-пинга)', async () => {
+  const gh = ghStub(); const k = keeper();
+  const issue = { number: 5, title: 'Моя задача', body: 'b', labels: [{ name: 'midas:state:planning' }, { name: 'midas:gate:plan' }] };
+  await runPlanner({ gh, keeper: k, config: CONFIG, repo: 'o/r', issue, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.1, timedOut: false }), day: '2026-07-03' });
+  const ev = k.readAll().find((e) => e.type === 'awaiting-approval');
+  assert.ok(ev, 'журнал содержит событие awaiting-approval');
+  assert.equal(ev.title, 'Моя задача');
+  assert.equal(ev.goal, 'x', 'goal извлечён из секции ## Цель плана (PLAN5)');
+  assert.equal(ev.issue, 5);
+});
+
+test('planner: НЕ gated-задача НЕ пишет журнал-событие awaiting-approval', async () => {
+  const gh = ghStub(); const k = keeper();
+  const issue = { number: 6, title: 't', body: 'b', labels: [{ name: 'midas:state:planning' }] };
+  await runPlanner({ gh, keeper: k, config: CONFIG, repo: 'o/r', issue, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.1, timedOut: false }), day: '2026-07-03' });
+  assert.ok(!k.readAll().some((e) => e.type === 'awaiting-approval'), 'без gate:plan — нет спец-события');
+});
+
 test('planner: labels без midas:gate:plan → coding как раньше (регресс автономии)', async () => {
   const gh = ghStub();
   const issue = { number: 6, title: 't', body: 'b', labels: [{ name: 'midas:state:planning' }, { name: 'bug' }] };
