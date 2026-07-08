@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 // Keeper: JSONL-журнал (только вперёд, без правок прошлого), курсор per-repo,
 // агрегаты стоимости. Всё восстанавливается из файлов при рестарте.
-export function makeKeeper(dataDir, { now = () => new Date().toISOString() } = {}) {
+export function makeKeeper(dataDir, { now = () => new Date().toISOString(), onAppend } = {}) {
   mkdirSync(dataDir, { recursive: true });
   const journalPath = join(dataDir, 'journal.jsonl');
   const cursorPath = join(dataDir, 'cursor.json');
@@ -42,6 +42,12 @@ export function makeKeeper(dataDir, { now = () => new Date().toISOString() } = {
       const e = { ts: now(), ...event };
       appendFileSync(journalPath, JSON.stringify(e) + '\n');
       absorb(e);
+      // Подписчик (напр. Telegram-нотификатор) — best-effort: его сбой не должен
+      // ломать журнал/демон. Реплей истории при старте идёт через absorb(), не
+      // через append() → onAppend не триггерится на историю (без спама).
+      if (onAppend) {
+        try { onAppend(e); } catch (err) { console.warn(`[keeper] onAppend упал: ${err.message}`); }
+      }
     },
     readAll: () => [...events],
     hasProcessed: (key) => processed.has(key),
