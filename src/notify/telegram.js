@@ -24,6 +24,11 @@ function issueUrl(repo, n) {
   return `https://github.com/${repo}/issues/${n}`;
 }
 
+// Ссылка на PR (accepted/work-done ведут сюда — PR мержат, не issue).
+function prUrl(repo, n) {
+  return `https://github.com/${repo}/pull/${n}`;
+}
+
 // Чистая функция: журнал-событие → текст сообщения или null (событие не репортим).
 // Whitelist значимых типов; всё остальное (processed/cost/race-skip/daemon-start/…) — null.
 export function eventToMessage(event, { monUrl = 'https://mon.adarasoft.com', repo = 'bronxtc52/midas' } = {}) {
@@ -32,8 +37,11 @@ export function eventToMessage(event, { monUrl = 'https://mon.adarasoft.com', re
   switch (event.type) {
     case 'work-done': {
       const n = issueNoOf(event.task);
+      const r = repoOf(event.task, repo);
+      // Сообщение про PR → и ссылка на PR (если известен), иначе на issue.
+      const link = event.pr ? prUrl(r, event.pr) : issueUrl(r, n);
       const pr = event.pr ? ` (PR #${event.pr})` : '';
-      return `🔨 #${n}: код готов${pr} → ревью\n${issueUrl(repoOf(event.task, repo), n)}`;
+      return `🔨 #${n}: код готов${pr} → ревью\n${link}`;
     }
 
     case 'awaiting-approval': {
@@ -62,10 +70,15 @@ export function eventToMessage(event, { monUrl = 'https://mon.adarasoft.com', re
       // Переходы конвейера. awaiting-approval — через спец-событие (дубля не даём);
       // review-исход (work-done) уже сообщён отдельным событием.
       const n = event.issue ?? '?';
-      const url = issueUrl(event.repo || repo, n);
+      const r = event.repo || repo;
+      const url = issueUrl(r, n);
       switch (event.result) {
         case 'planned': return `📋 #${n}: план готов → кодинг\n${url}`;
-        case 'accepted': return `✅ #${n} принято — ждёт мерджа владельцем\n${url}`;
+        case 'accepted':
+          // «ждёт мерджа» → ведём на PR (его и мержат) + готовая инструкция. Мерж — только владелец.
+          return event.pr
+            ? `✅ #${n} принято — ждёт твоего мерджа (мержишь только ты).\nPR: ${prUrl(r, event.pr)}\nСмержить: открой PR → «Merge pull request», либо в терминале:\ngh pr merge ${event.pr} --repo ${r} --squash --delete-branch`
+            : `✅ #${n} принято — ждёт твоего мерджа (мержишь только ты).\n${url}`;
         case 'rejected': return `♻️ #${n} отклонено ревью → возврат в кодинг\n${url}`;
         default: return null; // awaiting-approval, review, blocked и пр. — не здесь
       }

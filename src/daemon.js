@@ -38,7 +38,8 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
     // blocked-исход не помечаем: после ручной разблокировки тот же sha должен
     // ревьюиться снова (находка ревью №4)
     if (res?.status !== 'blocked') keeper.markProcessed(key);
-    keeper.append({ type: 'action', action: 'review', repo, issue: issue.number, result: res?.status ?? res?.verdict });
+    // pr в событии — чтобы Telegram-отчёт accepted вёл на PR (его и мержат), не на issue.
+    keeper.append({ type: 'action', action: 'review', repo, issue: issue.number, result: res?.status ?? res?.verdict, pr: pr.number });
   }
 
   async function tick(opts = {}) {
