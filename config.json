@@ -8,16 +8,16 @@
   "session_max_turns": 30,
   "session_timeout_sec": 1800,
   "labels": {
-    "ready": "state:ready",
-    "planning": "state:planning",
-    "coding": "state:coding",
-    "review": "state:review",
-    "blocked": "state:blocked",
-    "accepted": "state:accepted",
-    "rejected": "state:rejected",
+    "ready": "midas:state:ready",
+    "planning": "midas:state:planning",
+    "coding": "midas:state:coding",
+    "review": "midas:state:review",
+    "blocked": "midas:state:blocked",
+    "accepted": "midas:state:accepted",
+    "rejected": "midas:state:rejected",
     "accept": "midas:accept",
     "reject": "midas:reject",
-    "awaiting_approval": "state:awaiting-approval",
-    "gate_plan": "gate:plan"
+    "awaiting_approval": "midas:state:awaiting-approval",
+    "gate_plan": "midas:gate:plan"
   }
 }

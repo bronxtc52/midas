@@ -24,36 +24,36 @@ function fakeFetch(routes) {
 test('listIssues: label-фильтр и since уходят в query', async () => {
   const { impl, calls } = fakeFetch([{ match: (u) => u.includes('/issues'), res: { status: 200, json: [{ number: 1 }] } }]);
   const gh = makeGh({ token: 't', fetchImpl: impl });
-  const out = await gh.listIssues('o/r', { label: 'state:ready', since: '2026-07-03T00:00:00Z' });
+  const out = await gh.listIssues('o/r', { label: 'midas:state:ready', since: '2026-07-03T00:00:00Z' });
   assert.deepEqual(out, [{ number: 1 }]);
   assert.match(calls[0].url, /repos\/o\/r\/issues/);
-  assert.match(calls[0].url, /labels=state%3Aready|labels=state:ready/);
+  assert.match(calls[0].url, /labels=midas%3Astate%3Aready/);
   assert.match(calls[0].url, /since=/);
 });
 
 test('transitionState: optimistic — state сменился между опросом и PATCH → skipped, PUT labels не зовётся', async () => {
   const { impl, calls } = fakeFetch([
-    { match: (u, m) => m === 'GET' && /issues\/7$/.test(u), res: { status: 200, json: { number: 7, labels: [{ name: 'state:coding' }] } } },
+    { match: (u, m) => m === 'GET' && /issues\/7$/.test(u), res: { status: 200, json: { number: 7, labels: [{ name: 'midas:state:coding' }] } } },
     { match: (u, m) => m === 'PUT', res: { status: 200, json: [] } },
   ]);
   const gh = makeGh({ token: 't', fetchImpl: impl });
-  const r = await gh.transitionState('o/r', 7, 'state:ready', 'state:planning');
-  assert.deepEqual(r, { skipped: true, current: 'state:coding' });
+  const r = await gh.transitionState('o/r', 7, 'midas:state:ready', 'midas:state:planning');
+  assert.deepEqual(r, { skipped: true, current: 'midas:state:coding' });
   assert.ok(!calls.some((c) => c.method === 'PUT'), 'labels не переписаны при гонке');
 });
 
 test('transitionState: совпало → хирургически DELETE from + POST to, чужие лейблы не переписываются', async () => {
   const { impl, calls } = fakeFetch([
-    { match: (u, m) => m === 'GET' && /issues\/7$/.test(u), res: { status: 200, json: { number: 7, labels: [{ name: 'bug' }, { name: 'state:ready' }] } } },
+    { match: (u, m) => m === 'GET' && /issues\/7$/.test(u), res: { status: 200, json: { number: 7, labels: [{ name: 'bug' }, { name: 'midas:state:ready' }] } } },
     { match: (u, m) => m === 'DELETE', res: { status: 200, json: {} } },
     { match: (u, m) => m === 'POST' && /issues\/7\/labels$/.test(u), res: { status: 200, json: [] } },
   ]);
   const gh = makeGh({ token: 't', fetchImpl: impl });
-  const r = await gh.transitionState('o/r', 7, 'state:ready', 'state:planning');
+  const r = await gh.transitionState('o/r', 7, 'midas:state:ready', 'midas:state:planning');
   assert.deepEqual(r, { ok: true });
-  assert.ok(calls.some((c) => c.method === 'DELETE' && /labels\/state%3Aready$/.test(c.url)), 'снят только from-лейбл');
+  assert.ok(calls.some((c) => c.method === 'DELETE' && /labels\/midas%3Astate%3Aready$/.test(c.url)), 'снят только from-лейбл');
   const post = calls.find((c) => c.method === 'POST');
-  assert.deepEqual(post.body.labels, ['state:planning']);
+  assert.deepEqual(post.body.labels, ['midas:state:planning']);
   assert.ok(!calls.some((c) => c.method === 'PUT'), 'PUT всего списка не используется');
 });
 

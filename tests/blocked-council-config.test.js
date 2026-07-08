@@ -47,7 +47,7 @@ test('askCouncil: успех возвращает ответ', async () => {
 
 test('loadConfig: дефолты из config.json + env-оверрайд интервала', () => {
   const d = mkdtempSync(join(tmpdir(), 'midas-cfg-'));
-  writeFileSync(join(d, 'config.json'), JSON.stringify({ repos_allowlist: ['o/r'], poll_interval_sec: 45, labels: { ready: 'state:ready' } }));
+  writeFileSync(join(d, 'config.json'), JSON.stringify({ repos_allowlist: ['o/r'], poll_interval_sec: 45, labels: { ready: 'midas:state:ready' } }));
   const c1 = loadConfig(d, {});
   assert.equal(c1.poll_interval_sec, 45);
   const c2 = loadConfig(d, { MIDAS_POLL_INTERVAL_SEC: '10' });

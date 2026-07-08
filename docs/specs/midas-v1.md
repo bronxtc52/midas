@@ -23,14 +23,14 @@ polling'ом (ADR: вариант A, 30–60 с, курсор «последне
 | Роль | Вход | Выход | Ключевые запреты |
 |---|---|---|---|
 | **Orchestrator** (демон) | события GitHub (issues/PR/checks) | пробуждение ролей, переводы state-лейблов, журнал | не «думает»: только маршрутизация по машине состояний |
-| **Planner** | issue со `state:ready` | план-комментарий в issue (файлы, шаги, DoD) | не пишет код; при неполном ТЗ — обязан `state:blocked` |
-| **Worker** | issue с планом | ветка + коммиты + PR, `state:review` | не мержит; не меняет план и тесты; работает только в allowlist-репо |
+| **Planner** | issue со `midas:state:ready` | план-комментарий в issue (файлы, шаги, DoD) | не пишет код; при неполном ТЗ — обязан `midas:state:blocked` |
+| **Worker** | issue с планом | ветка + коммиты + PR, `midas:state:review` | не мержит; не меняет план и тесты; работает только в allowlist-репо |
 | **Reviewer** | PR | структурированный вердикт-комментарий по рубрике (KB t2-2) | не правит код |
 | **Acceptor** | PR + DoD issue | label `midas:accept` / `midas:reject` (+причины) | не расширяет скоуп; критерии только проверяемые |
 | **Council** | развилка от Planner'а | синтез мнений внешних моделей (or-fusion → deepseek-direct) | v1: опционален; без PII/секретов наружу |
 | **Keeper** | все события цикла | JSONL-журнал, учёт токенов/стоимости per task, курсор | часть демона в v1; данные не удаляет |
 
-**Blocked-протокол:** роль, которой не хватает данных, ставит `state:blocked` +
+**Blocked-протокол:** роль, которой не хватает данных, ставит `midas:state:blocked` +
 комментарий строго формата Конституции §3 (единственный канонический формат).
 Выход из blocked в v1 — только ручной: владелец отвечает комментарием и
 возвращает state-лейбл.
@@ -41,15 +41,15 @@ polling'ом (ADR: вариант A, 30–60 с, курсор «последне
   под watchdog. Docker Compose `~/projects/Midas/deploy/`; публичных endpoint'ов НЕТ.
 - **События:** polling GitHub API каждые 45 с (конфиг), курсор в `./data/cursor.json`
   (volume) — рестарт/downtime не теряет события, демон дочитывает пропущенное.
-- **State machine (labels):** `state:ready → state:planning → state:coding →
-  state:review → state:accepted|state:rejected`; `state:blocked` — из любого состояния;
-  `state:rejected` возвращает в `state:coding` с замечаниями Acceptor'а.
-- **Approval-гейт (Фаза 3 mon, opt-in по лейблу `gate:plan`):** задача с лейблом
-  `gate:plan` после планирования флипается Planner'ом не в `coding`, а в новое
-  **скип-состояние `state:awaiting-approval`** (его нет в `TABLE` → демон паузит, как
-  `blocked`). Выход — внешним relabel из mon.adarasoft.com: approve → `state:coding`
-  (Worker берёт план из комментария как обычно), reject → `state:rejected`. Задачи без
-  `gate:plan` бегут автономно как раньше. Гейт применяется только из `planning`
+- **State machine (labels):** `midas:state:ready → midas:state:planning → midas:state:coding →
+  midas:state:review → midas:state:accepted|midas:state:rejected`; `midas:state:blocked` — из любого состояния;
+  `midas:state:rejected` возвращает в `midas:state:coding` с замечаниями Acceptor'а.
+- **Approval-гейт (Фаза 3 mon, opt-in по лейблу `midas:gate:plan`):** задача с лейблом
+  `midas:gate:plan` после планирования флипается Planner'ом не в `coding`, а в новое
+  **скип-состояние `midas:state:awaiting-approval`** (его нет в `TABLE` → демон паузит, как
+  `blocked`). Выход — внешним relabel из mon.adarasoft.com: approve → `midas:state:coding`
+  (Worker берёт план из комментария как обычно), reject → `midas:state:rejected`. Задачи без
+  `midas:gate:plan` бегут автономно как раньше. Гейт применяется только из `planning`
   (fallback-реплан из `coding` не гейтится). Демон/mon-флип оба optimistic
   (`transitionState` сверяет `from`), гонка → `race-skip`/409.
 - **Worker-исполнение:** `claude -p` (headless) с `ANTHROPIC_API_KEY` из KV
@@ -74,8 +74,8 @@ polling'ом (ADR: вариант A, 30–60 с, курсор «последне
 |---|---|---|
 | **0. Фундамент** | структура репо, `config.yaml` (allowlist, слаги, интервалы, капы), fetch-env из KV, state-лейблы в GitHub, CI (lint+тесты), Sentry init | №1 закрыт: доступ = API-key владельца; Council-слаг = deepseek-direct |
 | **1. Демон событий** | polling + курсор + журнал + машина состояний, устойчивость к рестарту/rate-limit | — |
-| **2. Worker MVP** | issue → ветка → headless-сессия → PR → `state:review`; blocked-протокол | — |
-| **3. Экономика** | Keeper: токены/стоимость per task, жёсткий кап на задачу (превышение → `state:blocked` + отчёт), дневной кап | №2 закрыт ADR + отступлением на API-key |
+| **2. Worker MVP** | issue → ветка → headless-сессия → PR → `midas:state:review`; blocked-протокол | — |
+| **3. Экономика** | Keeper: токены/стоимость per task, жёсткий кап на задачу (превышение → `midas:state:blocked` + отчёт), дневной кап | №2 закрыт ADR + отступлением на API-key |
 | **4. Reviewer** | ревью PR по рубрике t2-2, вердикт-комментарий | — |
 | **5. Acceptor + Council** | приёмка ACCEPT/REJECT по DoD issue; Council для развилок | — |
 | **6. E2E + hardening** | деплой на mh-central, полный прогон тестовой задачи, runbook, Конституция финал | №3/№4 (часть 2/2) — сверка при появлении оригинала |
@@ -83,17 +83,17 @@ polling'ом (ADR: вариант A, 30–60 с, курсор «последне
 ## 5. Критерии приёмки v1 (каждый — да/нет)
 
 1. `docker compose up -d` на mh-central: демон работает, healthcheck зелёный.
-2. Issue со `state:ready` подхватывается ≤60 с: журнальная запись + перевод лейбла.
-3. Worker создаёт ветку и PR, связанный с issue, и ставит `state:review`.
-4. Задача с намеренно неполным ТЗ получает `state:blocked` + комментарий-вопрос
+2. Issue со `midas:state:ready` подхватывается ≤60 с: журнальная запись + перевод лейбла.
+3. Worker создаёт ветку и PR, связанный с issue, и ставит `midas:state:review`.
+4. Задача с намеренно неполным ТЗ получает `midas:state:blocked` + комментарий-вопрос
    заданного формата; демон её не трогает до ручного возврата лейбла.
 5. Reviewer оставляет на PR структурированный вердикт по рубрике; запускается он
-   только при зелёных обязательных CI-чеках PR (красные → возврат в `state:coding`).
-6. Acceptor ставит `midas:accept`/`midas:reject`; reject возвращает `state:coding`.
+   только при зелёных обязательных CI-чеках PR (красные → возврат в `midas:state:coding`).
+6. Acceptor ставит `midas:accept`/`midas:reject`; reject возвращает `midas:state:coding`.
 7. Kill демона → создать issue → поднять демон → issue подхвачен (курсор работает).
 8. Секретов нет ни в репо, ни в образе (gitleaks чисто); всё из KV в рантайме.
 9. В коде ролей отсутствует вызов merge; мерж PR выполняет только человек.
-10. Задача, превысившая кап стоимости, останавливается со `state:blocked` и отчётом $.
+10. Задача, превысившая кап стоимости, останавливается со `midas:state:blocked` и отчётом $.
 11. Sentry принимает тестовое событие проекта `midas`; сервис виден в watchdog-fleet.
 12. `plans/midas-v1-backlog.md` + `docs/constitution.md` v1.1 в репо; issues этапов
     на доске «MIDAS v1».

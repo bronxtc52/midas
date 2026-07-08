@@ -13,7 +13,7 @@ import { runAcceptor } from '../src/roles/acceptor.js';
 const CONFIG = {
   cost_cap_usd_per_task: 5, cost_cap_usd_per_day: 20,
   session_max_turns: 30, session_timeout_sec: 1800,
-  labels: { ready: 'state:ready', planning: 'state:planning', coding: 'state:coding', review: 'state:review', blocked: 'state:blocked', accepted: 'state:accepted', rejected: 'state:rejected', accept: 'midas:accept', reject: 'midas:reject', awaiting_approval: 'state:awaiting-approval', gate_plan: 'gate:plan' },
+  labels: { ready: 'midas:state:ready', planning: 'midas:state:planning', coding: 'midas:state:coding', review: 'midas:state:review', blocked: 'midas:state:blocked', accepted: 'midas:state:accepted', rejected: 'midas:state:rejected', accept: 'midas:accept', reject: 'midas:reject', awaiting_approval: 'midas:state:awaiting-approval', gate_plan: 'midas:gate:plan' },
 };
 
 function ghStub() {
@@ -39,52 +39,52 @@ test('planner: успех → план-комментарий + переход �
   const r = await runPlanner({ gh, keeper: k, config: CONFIG, repo: 'o/r', issue: { number: 5, title: 't', body: 'b' }, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.1, timedOut: false }), day: '2026-07-03' });
   assert.equal(r.status, 'planned');
   assert.ok(gh.calls.some(c => c[0] === 'addComment' && c[3].includes('## Цель')));
-  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'state:planning' && c[4] === 'state:coding'));
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'midas:state:planning' && c[4] === 'midas:state:coding'));
   assert.equal(k.costForTask('o/r#5'), 0.1);
 });
 
-test('planner: gate:plan + from=planning → awaiting-approval (гейт), НЕ coding', async () => {
+test('planner: midas:gate:plan + from=planning → awaiting-approval (гейт), НЕ coding', async () => {
   const gh = ghStub(); const k = keeper();
-  const issue = { number: 5, title: 't', body: 'b', labels: [{ name: 'state:planning' }, { name: 'gate:plan' }] };
+  const issue = { number: 5, title: 't', body: 'b', labels: [{ name: 'midas:state:planning' }, { name: 'midas:gate:plan' }] };
   const r = await runPlanner({ gh, keeper: k, config: CONFIG, repo: 'o/r', issue, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.1, timedOut: false }), day: '2026-07-03' });
   assert.equal(r.status, 'awaiting-approval');
-  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'state:planning' && c[4] === 'state:awaiting-approval'), 'флип в awaiting-approval');
-  assert.ok(!gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'state:coding'), 'НЕ ушёл сразу в coding');
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'midas:state:planning' && c[4] === 'midas:state:awaiting-approval'), 'флип в awaiting-approval');
+  assert.ok(!gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:coding'), 'НЕ ушёл сразу в coding');
   assert.ok(gh.calls.some(c => c[0] === 'addComment' && c[3].includes('## Цель')), 'план опубликован');
 });
 
-test('planner: labels без gate:plan → coding как раньше (регресс автономии)', async () => {
+test('planner: labels без midas:gate:plan → coding как раньше (регресс автономии)', async () => {
   const gh = ghStub();
-  const issue = { number: 6, title: 't', body: 'b', labels: [{ name: 'state:planning' }, { name: 'bug' }] };
+  const issue = { number: 6, title: 't', body: 'b', labels: [{ name: 'midas:state:planning' }, { name: 'bug' }] };
   const r = await runPlanner({ gh, keeper: keeper(), config: CONFIG, repo: 'o/r', issue, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.1, timedOut: false }), day: '2026-07-03' });
   assert.equal(r.status, 'planned');
-  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'state:planning' && c[4] === 'state:coding'));
-  assert.ok(!gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'state:awaiting-approval'));
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'midas:state:planning' && c[4] === 'midas:state:coding'));
+  assert.ok(!gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:awaiting-approval'));
 });
 
-test('planner: gate:plan есть, но fromLabel=coding (fallback-реплан) → гейт НЕ включается', async () => {
+test('planner: midas:gate:plan есть, но fromLabel=coding (fallback-реплан) → гейт НЕ включается', async () => {
   const gh = ghStub();
-  const issue = { number: 8, title: 't', body: 'b', labels: [{ name: 'state:coding' }, { name: 'gate:plan' }] };
+  const issue = { number: 8, title: 't', body: 'b', labels: [{ name: 'midas:state:coding' }, { name: 'midas:gate:plan' }] };
   const r = await runPlanner({ gh, keeper: keeper(), config: CONFIG, repo: 'o/r', issue, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.01, timedOut: false }), day: '2026-07-03', fromLabel: CONFIG.labels.coding });
   assert.equal(r.status, 'planned');
   assert.ok(!gh.calls.some(c => c[0] === 'transitionState'), 'реплан из coding не гейтить и не гонять no-op переход');
 });
 
-test('planner: сессия сообщила BLOCKED → blocked-комментарий канонического формата + state:blocked', async () => {
+test('planner: сессия сообщила BLOCKED → blocked-комментарий канонического формата + midas:state:blocked', async () => {
   const gh = ghStub(); const k = keeper();
   const out = 'BLOCKED: {"question":"q?","known":"k","options":["A) x","B) y"],"recommendation":"A"}';
   const r = await runPlanner({ gh, keeper: k, config: CONFIG, repo: 'o/r', issue: { number: 5, title: 't', body: '' }, claudeRun: async () => ({ ok: true, result: out, costUsd: 0.05, timedOut: false }), day: '2026-07-03' });
   assert.equal(r.status, 'blocked');
   const c = gh.calls.find(c => c[0] === 'addComment');
   assert.match(c[3], /## ⛔ BLOCKED/);
-  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'state:blocked'));
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:blocked'));
 });
 
 test('planner: план без 5 секций → blocked, не coding', async () => {
   const gh = ghStub();
   const r = await runPlanner({ gh, keeper: keeper(), config: CONFIG, repo: 'o/r', issue: { number: 5, title: 't', body: 'b' }, claudeRun: async () => ({ ok: true, result: 'полтора раздела', costUsd: 0.1, timedOut: false }), day: '2026-07-03' });
   assert.equal(r.status, 'blocked');
-  assert.ok(!gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'state:coding'));
+  assert.ok(!gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:coding'));
 });
 
 test('planner: кап задачи исчерпан → blocked ДО запуска сессии', async () => {
@@ -103,8 +103,8 @@ test('planner c fromLabel=coding (fallback без плана): blocked уход�
   const out = 'BLOCKED: {"question":"q?","known":"k","options":["A) x"],"recommendation":"A"}';
   await runPlanner({ gh, keeper: keeper(), config: CONFIG, repo: 'o/r', issue: { number: 8, title: 't', body: '' }, claudeRun: async () => ({ ok: true, result: out, costUsd: 0.01, timedOut: false }), day: '2026-07-03', fromLabel: CONFIG.labels.coding });
   const t = gh.calls.find(c => c[0] === 'transitionState');
-  assert.equal(t[3], 'state:coding', 'переход из фактического state, не из planning');
-  assert.equal(t[4], 'state:blocked');
+  assert.equal(t[3], 'midas:state:coding', 'переход из фактического state, не из planning');
+  assert.equal(t[4], 'midas:state:blocked');
 });
 
 test('planner c fromLabel=coding: успех НЕ делает no-op переход coding→coding', async () => {
@@ -114,7 +114,7 @@ test('planner c fromLabel=coding: успех НЕ делает no-op перех�
   assert.ok(gh.calls.some(c => c[0] === 'addComment'), 'план опубликован');
 });
 
-test('worker: интеграция с локальным git — ветка, коммит, push, PR, state:review', async () => {
+test('worker: интеграция с локальным git — ветка, коммит, push, PR, midas:state:review', async () => {
   const root = mkdtempSync(join(tmpdir(), 'midas-w-'));
   const bare = join(root, 'remote.git');
   mkdirSync(bare);
@@ -140,7 +140,7 @@ test('worker: интеграция с локальным git — ветка, к�
   const pr = gh.calls.find(c => c[0] === 'createPR');
   assert.equal(pr[2].head, 'midas/issue-3');
   assert.match(pr[2].body, /#3/);
-  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'state:coding' && c[4] === 'state:review'));
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'midas:state:coding' && c[4] === 'midas:state:review'));
 });
 
 test('worker: сессия не изменила файлы → blocked, PR не создаётся', async () => {
@@ -166,16 +166,16 @@ test('parseVerdict: valid pass/fail и мусор → fail', () => {
   assert.equal(parseVerdict('никакого вердикта').verdict, 'fail', 'непарсибельно = fail, не pass');
 });
 
-test('acceptor: pass → midas:accept + state:accepted; fail → midas:reject + возврат в coding с причинами', async () => {
+test('acceptor: pass → midas:accept + midas:state:accepted; fail → midas:reject + возврат в coding с причинами', async () => {
   let gh = ghStub();
   await runAcceptor({ gh, config: CONFIG, repo: 'o/r', issue: { number: 3 }, verdict: { verdict: 'pass', findings: [] } });
   assert.ok(gh.calls.some(c => c[0] === 'addLabels' && c[3].includes('midas:accept')));
-  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'state:accepted'));
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:accepted'));
 
   gh = ghStub();
   await runAcceptor({ gh, config: CONFIG, repo: 'o/r', issue: { number: 3 }, verdict: { verdict: 'fail', findings: [{ severity: 'high', note: 'сломано' }] } });
   assert.ok(gh.calls.some(c => c[0] === 'addLabels' && c[3].includes('midas:reject')));
-  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'state:coding'));
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:coding'));
   const comment = gh.calls.find(c => c[0] === 'addComment');
   assert.match(comment[3], /сломано/);
 });
