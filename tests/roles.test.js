@@ -13,7 +13,7 @@ import { runAcceptor } from '../src/roles/acceptor.js';
 const CONFIG = {
   cost_cap_usd_per_task: 5, cost_cap_usd_per_day: 20,
   session_max_turns: 30, session_timeout_sec: 1800,
-  labels: { ready: 'state:ready', planning: 'state:planning', coding: 'state:coding', review: 'state:review', blocked: 'state:blocked', accepted: 'state:accepted', rejected: 'state:rejected', accept: 'midas:accept', reject: 'midas:reject' },
+  labels: { ready: 'state:ready', planning: 'state:planning', coding: 'state:coding', review: 'state:review', blocked: 'state:blocked', accepted: 'state:accepted', rejected: 'state:rejected', accept: 'midas:accept', reject: 'midas:reject', awaiting_approval: 'state:awaiting-approval', gate_plan: 'gate:plan' },
 };
 
 function ghStub() {
@@ -41,6 +41,33 @@ test('planner: успех → план-комментарий + переход �
   assert.ok(gh.calls.some(c => c[0] === 'addComment' && c[3].includes('## Цель')));
   assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'state:planning' && c[4] === 'state:coding'));
   assert.equal(k.costForTask('o/r#5'), 0.1);
+});
+
+test('planner: gate:plan + from=planning → awaiting-approval (гейт), НЕ coding', async () => {
+  const gh = ghStub(); const k = keeper();
+  const issue = { number: 5, title: 't', body: 'b', labels: [{ name: 'state:planning' }, { name: 'gate:plan' }] };
+  const r = await runPlanner({ gh, keeper: k, config: CONFIG, repo: 'o/r', issue, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.1, timedOut: false }), day: '2026-07-03' });
+  assert.equal(r.status, 'awaiting-approval');
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'state:planning' && c[4] === 'state:awaiting-approval'), 'флип в awaiting-approval');
+  assert.ok(!gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'state:coding'), 'НЕ ушёл сразу в coding');
+  assert.ok(gh.calls.some(c => c[0] === 'addComment' && c[3].includes('## Цель')), 'план опубликован');
+});
+
+test('planner: labels без gate:plan → coding как раньше (регресс автономии)', async () => {
+  const gh = ghStub();
+  const issue = { number: 6, title: 't', body: 'b', labels: [{ name: 'state:planning' }, { name: 'bug' }] };
+  const r = await runPlanner({ gh, keeper: keeper(), config: CONFIG, repo: 'o/r', issue, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.1, timedOut: false }), day: '2026-07-03' });
+  assert.equal(r.status, 'planned');
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'state:planning' && c[4] === 'state:coding'));
+  assert.ok(!gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'state:awaiting-approval'));
+});
+
+test('planner: gate:plan есть, но fromLabel=coding (fallback-реплан) → гейт НЕ включается', async () => {
+  const gh = ghStub();
+  const issue = { number: 8, title: 't', body: 'b', labels: [{ name: 'state:coding' }, { name: 'gate:plan' }] };
+  const r = await runPlanner({ gh, keeper: keeper(), config: CONFIG, repo: 'o/r', issue, claudeRun: async () => ({ ok: true, result: PLAN5, costUsd: 0.01, timedOut: false }), day: '2026-07-03', fromLabel: CONFIG.labels.coding });
+  assert.equal(r.status, 'planned');
+  assert.ok(!gh.calls.some(c => c[0] === 'transitionState'), 'реплан из coding не гейтить и не гонять no-op переход');
 });
 
 test('planner: сессия сообщила BLOCKED → blocked-комментарий канонического формата + state:blocked', async () => {

@@ -15,6 +15,12 @@ gh label create "state:blocked"   --repo "$REPO" --color "1155CC" --description 
 gh label create "state:accepted"  --repo "$REPO" --color "0B5394" --description "Accepted by Acceptor"           --force
 gh label create "state:rejected"  --repo "$REPO" --color "073763" --description "Rejected, back to coding"       --force
 
+# approval gate (Phase 3): amber pause-state between planning and coding.
+gh label create "state:awaiting-approval" --repo "$REPO" --color "D4A72C" --description "Plan awaits owner approval in mon (gate:plan tasks)" --force
+
+# gate:plan — opt-in flag on an issue: Planner pauses it on state:awaiting-approval instead of coding.
+gh label create "gate:plan" --repo "$REPO" --color "8250DF" --description "Require owner approval of the plan before coding" --force
+
 # midas:accept / midas:reject — Acceptor verdict, green/red.
 gh label create "midas:accept" --repo "$REPO" --color "2DA44E" --description "Acceptor: DoD met"     --force
 gh label create "midas:reject" --repo "$REPO" --color "CF222E" --description "Acceptor: DoD not met" --force

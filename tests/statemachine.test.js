@@ -22,6 +22,11 @@ test('blocked терминален для автоматики', () => {
   assert.equal(decide('state:blocked'), null);
 });
 
+test('awaiting-approval — скип-состояние (гейт): демон не трогает, ждёт внешнего relabel', () => {
+  // Как blocked: отсутствие в TABLE = пауза. mon флипает лейбл (approve→coding / reject→rejected).
+  assert.equal(decide('state:awaiting-approval'), null);
+});
+
 test('accepted/rejected — не трогаем', () => {
   assert.equal(decide('state:accepted'), null);
   assert.equal(decide('state:rejected'), null);

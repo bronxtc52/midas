@@ -44,6 +44,14 @@ polling'ом (ADR: вариант A, 30–60 с, курсор «последне
 - **State machine (labels):** `state:ready → state:planning → state:coding →
   state:review → state:accepted|state:rejected`; `state:blocked` — из любого состояния;
   `state:rejected` возвращает в `state:coding` с замечаниями Acceptor'а.
+- **Approval-гейт (Фаза 3 mon, opt-in по лейблу `gate:plan`):** задача с лейблом
+  `gate:plan` после планирования флипается Planner'ом не в `coding`, а в новое
+  **скип-состояние `state:awaiting-approval`** (его нет в `TABLE` → демон паузит, как
+  `blocked`). Выход — внешним relabel из mon.adarasoft.com: approve → `state:coding`
+  (Worker берёт план из комментария как обычно), reject → `state:rejected`. Задачи без
+  `gate:plan` бегут автономно как раньше. Гейт применяется только из `planning`
+  (fallback-реплан из `coding` не гейтится). Демон/mon-флип оба optimistic
+  (`transitionState` сверяет `from`), гонка → `race-skip`/409.
 - **Worker-исполнение:** `claude -p` (headless) с `ANTHROPIC_API_KEY` из KV
   `midas--production--ANTHROPIC-API-KEY`. ⚠️ Отступление от ADR оплаты: владелец
   2026-07-03 выдал API-key сразу (вариант B) — триггер перехода исполнен досрочно,

@@ -64,9 +64,16 @@ export async function runPlanner({ gh, keeper, config, repo, issue, claudeRun, d
   }
 
   await gh.addComment(repo, issue.number, s.result);
-  if (from !== config.labels.coding) {
-    await gh.transitionState(repo, issue.number, from, config.labels.coding);
+  // Approval-гейт (opt-in по лейблу gate:plan): помеченная задача паузит на
+  // state:awaiting-approval между planning и coding — mon даёт человеку approve/reject.
+  // Гейт применяем ТОЛЬКО из planning: fallback-реплан (from===coding) не гейтим (иначе
+  // no-op переход coding→coding и лишняя пауза уже прошедшей гейт задачи).
+  const labelNames = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l?.name)).filter(Boolean);
+  const gated = from === config.labels.planning && labelNames.includes(config.labels.gate_plan);
+  const target = gated ? config.labels.awaiting_approval : config.labels.coding;
+  if (from !== target) {
+    await gh.transitionState(repo, issue.number, from, target);
   }
   keeper.markProcessed(`${task}@planning`);
-  return { status: 'planned' };
+  return { status: gated ? 'awaiting-approval' : 'planned' };
 }
