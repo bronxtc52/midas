@@ -33,6 +33,25 @@ test('eventToMessage: awaiting-approval → ссылка на mon + цель п�
   assert.match(m, /\b5\b/, 'есть номер issue');
 });
 
+test('eventToMessage: accepted → ссылка на PR + инструкция мерджа (НЕ на issue)', () => {
+  const m = eventToMessage({ type: 'action', action: 'review', repo: 'bronxtc52/server-watchdog', issue: 50, result: 'accepted', pr: 51 }, OPTS);
+  assert.match(m, /server-watchdog\/pull\/51/, 'ссылка на PR');
+  assert.doesNotMatch(m, /issues\/50/, 'НЕ ссылка на issue');
+  assert.match(m, /мерж/i, 'упоминание мерджа');
+  assert.match(m, /gh pr merge 51 --repo bronxtc52\/server-watchdog/, 'готовая команда мерджа');
+});
+
+test('eventToMessage: accepted без pr → строка-фолбэк, не падает', () => {
+  const m = eventToMessage({ type: 'action', action: 'review', repo: 'bronxtc52/midas', issue: 5, result: 'accepted' }, OPTS);
+  assert.equal(typeof m, 'string');
+  assert.match(m, /принят/i);
+});
+
+test('eventToMessage: work-done → ссылка на PR (не на issue)', () => {
+  const m = eventToMessage({ type: 'work-done', task: 'bronxtc52/midas#5', pr: 7 }, OPTS);
+  assert.match(m, /midas\/pull\/7/, 'work-done ссылается на PR');
+});
+
 test('eventToMessage: blocked/ci-gate-red/daily-cap-pause/tick-error', () => {
   assert.match(eventToMessage({ type: 'blocked', task: 'bronxtc52/midas#5', question: 'что делать?' }, OPTS), /что делать\?/);
   assert.match(eventToMessage({ type: 'ci-gate-red', repo: 'bronxtc52/midas', issue: 5, sha: 'abc' }, OPTS), /CI/i);
