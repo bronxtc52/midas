@@ -1,10 +1,11 @@
 import { decide, stateOf } from './statemachine.js';
+import { healthSnapshot } from './health.js';
 
 // Orchestrator: только маршрутизация по машине состояний, никакой интерпретации
 // содержимого задач (Конституция §2). Одна задача за раз (v1).
 const scrub = (s) => String(s).replace(/x-access-token:[^@]+@/g, '***@');
 
-export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbeat = () => {}, notify = () => {}, overlapSec = 120 }) {
+export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbeat = () => {}, notify = () => {}, overlapSec = 120, health = healthSnapshot }) {
   let timer = null;
   let ticking = false;
 
@@ -42,8 +43,45 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
     keeper.append({ type: 'action', action: 'review', repo, issue: issue.number, result: res?.status ?? res?.verdict, pr: pr.number });
   }
 
+  // Снимок живости сервиса после мерджа: URL — только из config.json health_urls[repo]
+  // (fleet-реестр server-watchdog НЕ читаем). Нет записи → «не настроен».
+  function repoHealth(repo) {
+    return health((config.health_urls || {})[repo]);
+  }
+
+  // Мерж-детект: после accepted владелец мержит PR → issue закрывается (Closes #N) →
+  // задача выпадает из open-поллинга listUpdatedIssues. Поэтому идём по ЖУРНАЛУ
+  // accepted-событий (не по open-issue), для каждой ещё-не-помеченной проверяем PR
+  // по head-ветке в state:all и ровно один раз эмитим `merged` (дедуп через
+  // keeper.markProcessed). MIDAS не мержит/не деплоит — только наблюдает и уведомляет.
+  async function checkMerges() {
+    // Обратная совместимость: gh без isPRMerged (старые тесты/моки) — шаг пропускаем.
+    if (typeof gh.isPRMerged !== 'function') return;
+    const accepted = keeper.readAll().filter(
+      (e) => e.type === 'action' && e.action === 'review' && e.result === 'accepted' && e.repo && e.issue != null,
+    );
+    const seen = new Set(); // одна задача может иметь несколько accepted-событий (reject-круги)
+    for (const ev of accepted) {
+      const key = `${ev.repo}#${ev.issue}@merged`;
+      if (seen.has(key) || keeper.hasProcessed(key)) continue;
+      seen.add(key);
+      try {
+        const { merged, number } = await gh.isPRMerged(ev.repo, `midas/issue-${ev.issue}`);
+        if (!merged) continue;
+        // markProcessed до append: повторный tick не дублирует событие `merged`.
+        keeper.markProcessed(key);
+        const healthLine = await repoHealth(ev.repo);
+        keeper.append({ type: 'merged', repo: ev.repo, issue: ev.issue, pr: number ?? ev.pr ?? null, health: healthLine });
+      } catch (e) {
+        // Одна сбойная задача (сеть/GH) не должна ронять весь мерж-обход и tick.
+        log(`merge-check ${ev.repo}#${ev.issue}: ${scrub(e.message)}`);
+      }
+    }
+  }
+
   async function tick(opts = {}) {
     heartbeat();
+    await checkMerges();
     const day = opts.today ?? new Date().toISOString().slice(0, 10);
     if (keeper.costForDay(day) >= config.cost_cap_usd_per_day) {
       log(`дневной кап $${config.cost_cap_usd_per_day} исчерпан — пауза до следующего дня`);

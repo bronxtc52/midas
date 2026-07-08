@@ -109,6 +109,16 @@ export function makeGh({
       return prs[0] ?? null;
     },
 
+    // Мерж владельцем закрывает issue (Closes #N) → задача выпадает из open-поллинга.
+    // Смотрим PR по head-ветке в state:all (включая закрытые). merged определяем по
+    // `merged_at` — закрытие PR БЕЗ мерджа его не выставляет (не даём ложный merged).
+    async isPRMerged(repo, branch) {
+      const owner = repo.split('/')[0];
+      const prs = await request(`/repos/${repo}/pulls${q({ head: `${owner}:${branch}`, state: 'all' })}`);
+      const pr = prs.find((p) => p.merged_at) ?? prs[0] ?? null;
+      return { merged: Boolean(pr && pr.merged_at), number: pr ? pr.number : null };
+    },
+
     getPRDiff: (repo, n) => request(`/repos/${repo}/pulls/${n}`, { raw: true, accept: 'application/vnd.github.v3.diff' }),
 
     // green | red | pending | none. «none» решает демон: свежий PR — ждать
