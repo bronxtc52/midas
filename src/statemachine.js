@@ -1,13 +1,17 @@
-export const STATE_PREFIX = 'state:';
+// Префикс состояний-лейблов. Именно `midas:state:` (не голый `state:`): все лейблы
+// MIDAS под неймспейсом `midas:` — так их видно среди чужих. Под-префикс `state:`
+// отличает лейблы-состояния (двигают конвейер) от лейблов-вердиктов `midas:accept`/
+// `midas:reject` (выходы Acceptor'а, не состояния) — они под `midas:`, но НЕ `midas:state:`.
+export const STATE_PREFIX = 'midas:state:';
 
 // Таблица переходов спеки §3. label-first: демон переводит лейбл в `to`
 // ДО запуска роли (когда from !== to); роль по завершении двигает дальше сама.
 const TABLE = {
-  'state:ready': { action: 'plan', to: 'state:planning' },
+  'midas:state:ready': { action: 'plan', to: 'midas:state:planning' },
   // planning = резюме после падения демона между лейблом и ролью
-  'state:planning': { action: 'plan', to: 'state:planning' },
-  'state:coding': { action: 'work', to: 'state:coding' },
-  'state:review': { action: 'review', to: 'state:review' },
+  'midas:state:planning': { action: 'plan', to: 'midas:state:planning' },
+  'midas:state:coding': { action: 'work', to: 'midas:state:coding' },
+  'midas:state:review': { action: 'review', to: 'midas:state:review' },
 };
 
 export function decide(state) {
