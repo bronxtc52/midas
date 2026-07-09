@@ -152,3 +152,26 @@ test('дневной кап исчерпан → tick не запускает р
   await daemon.tick({ today: '2026-07-03' });
   assert.ok(!calls.some(c => String(c[0]).startsWith('role:')), 'дневной кап держит демона в паузе');
 });
+
+test('tick-error дебаунс: consecutive растёт подряд; успешный tick между ошибками сбрасывает счётчик (issue #22)', async () => {
+  // heartbeat бросает на 1,2,4-м вызове tick и успешен на 3-м → последовательность
+  // ошибок: 1, 2, (успех сбрасывает), 1. Журнал пишет КАЖДУЮ ошибку (в т.ч. одиночную).
+  let n = 0;
+  const throwOn = new Set([1, 2, 4]);
+  const heartbeat = () => { n++; if (throwOn.has(n)) throw new Error('boom'); };
+  const gh = { listUpdatedIssues: async () => [], listIssues: async () => [] };
+  const keeper = makeKeeper(mkdtempSync(join(tmpdir(), 'midas-tickerr-')), { now: () => 't' });
+  const cfg = { ...CONFIG, poll_interval_sec: 0.01 };
+  const daemon = makeDaemon({ gh, keeper, config: cfg, roles: {}, log: () => {}, heartbeat });
+  daemon.start();
+  const deadline = Date.now() + 3000;
+  while (keeper.readAll().filter(e => e.type === 'tick-error').length < 3 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  daemon.stop();
+  const errs = keeper.readAll().filter((e) => e.type === 'tick-error');
+  assert.equal(errs.length, 3, 'журнал содержит запись для КАЖДОГО tick-error (включая одиночный)');
+  assert.equal(errs[0].consecutive, 1, 'первая ошибка → consecutive=1');
+  assert.equal(errs[1].consecutive, 2, 'вторая подряд → consecutive>=2 (алёрт)');
+  assert.equal(errs[2].consecutive, 1, 'успешный tick сбросил счётчик → снова 1');
+});
