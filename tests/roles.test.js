@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { makeKeeper } from '../src/keeper.js';
 import { runPlanner, validatePlan, extractGoal } from '../src/roles/planner.js';
 import { runWorker } from '../src/roles/worker.js';
-import { parseVerdict } from '../src/roles/reviewer.js';
+import { parseVerdict, runReviewer } from '../src/roles/reviewer.js';
 import { runAcceptor } from '../src/roles/acceptor.js';
 
 const CONFIG = {
@@ -220,6 +220,111 @@ test('parseVerdict: valid pass/fail и мусор → fail', () => {
   assert.equal(f.verdict, 'fail');
   assert.equal(f.findings.length, 1);
   assert.equal(parseVerdict('никакого вердикта').verdict, 'fail', 'непарсибельно = fail, не pass');
+});
+
+test('parseVerdict: JSON в ```json-fence после VERDICT: → распаршен', () => {
+  const t = 'бла-бла\nVERDICT:\n```json\n{"verdict":"pass","findings":[]}\n```';
+  assert.equal(parseVerdict(t).verdict, 'pass');
+});
+
+test('parseVerdict: JSON в безымянном ```-fence → распаршен', () => {
+  const t = 'VERDICT:\n```\n{"verdict":"fail","findings":[{"severity":"high","note":"y"}]}\n```';
+  const v = parseVerdict(t);
+  assert.equal(v.verdict, 'fail');
+  assert.equal(v.findings.length, 1);
+});
+
+test('parseVerdict: многострочный JSON после VERDICT: → распаршен', () => {
+  const t = 'VERDICT: {\n  "verdict": "pass",\n  "findings": []\n}';
+  assert.equal(parseVerdict(t).verdict, 'pass');
+});
+
+test('parseVerdict: текст после закрывающей } → распаршен (баланс скобок)', () => {
+  const t = 'VERDICT: {"verdict":"fail","findings":[{"severity":"med","note":"a{b}"}]} — конец ответа';
+  const v = parseVerdict(t);
+  assert.equal(v.verdict, 'fail');
+  assert.equal(v.findings[0].note, 'a{b}', 'скобки внутри строкового литерала не ломают баланс');
+});
+
+test('parseVerdict: берётся ПОСЛЕДНЕЕ вхождение VERDICT:', () => {
+  const t = 'сначала пишу про VERDICT: как формат\nVERDICT: {"verdict":"pass","findings":[]}';
+  assert.equal(parseVerdict(t).verdict, 'pass');
+});
+
+test('parseVerdict: битый JSON → unparsed-fail', () => {
+  assert.equal(parseVerdict('VERDICT: {"verdict":"pass",').verdict, 'fail');
+});
+
+test('parseVerdict: verdict не pass|fail → unparsed-fail', () => {
+  assert.equal(parseVerdict('VERDICT: {"verdict":"maybe"}').verdict, 'fail');
+});
+
+function reviewGh(diff = 'diff') {
+  const gh = ghStub();
+  gh.getPRDiff = async (...a) => { gh.calls.push(['getPRDiff', ...a]); return diff; };
+  return gh;
+}
+const REV_ARGS = (gh, k, claudeRun) => ({
+  gh, keeper: k, config: CONFIG, repo: 'o/r',
+  issue: { number: 7, title: 't', body: 'b' }, pr: { number: 77 },
+  plan: PLAN5, rubric: '', claudeRun, day: '2026-07-03', workRoot: '/tmp',
+});
+
+test('runReviewer: валидный pass с первого раза → коммент, journal, без ретрая и blocked', async () => {
+  const gh = reviewGh(); const k = keeper();
+  let runs = 0;
+  const r = await runReviewer(REV_ARGS(gh, k, async () => {
+    runs++;
+    return { ok: true, result: 'VERDICT: {"verdict":"pass","findings":[]}', costUsd: 0.1, timedOut: false };
+  }));
+  assert.equal(runs, 1, 'ровно один прогон');
+  assert.equal(r.verdict, 'pass');
+  assert.ok(!r.blocked);
+  assert.ok(gh.calls.some(c => c[0] === 'addComment' && c[3].includes('✅ pass')));
+  assert.ok(k.readAll().some(e => e.type === 'review' && e.verdict === 'pass'));
+});
+
+test('runReviewer: unparsed → ровно один повторный прогон; успех на 2-м → нормальный вердикт', async () => {
+  const gh = reviewGh(); const k = keeper();
+  let runs = 0;
+  const r = await runReviewer(REV_ARGS(gh, k, async () => {
+    runs++;
+    return runs === 1
+      ? { ok: true, result: 'без вердикта', costUsd: 0.1, timedOut: false }
+      : { ok: true, result: 'VERDICT: {"verdict":"pass","findings":[]}', costUsd: 0.1, timedOut: false };
+  }));
+  assert.equal(runs, 2, 'один повторный прогон после unparsed');
+  assert.equal(r.verdict, 'pass');
+  assert.ok(!r.blocked);
+  assert.equal(k.costForTask('o/r#7'), 0.2, 'addCost на каждый прогон');
+});
+
+test('runReviewer: повторный unparsed → blocked (не reject, не coding)', async () => {
+  const gh = reviewGh(); const k = keeper();
+  let runs = 0;
+  const r = await runReviewer(REV_ARGS(gh, k, async () => {
+    runs++;
+    return { ok: true, result: 'опять без вердикта', costUsd: 0.1, timedOut: false };
+  }));
+  assert.equal(runs, 2, 'ровно два прогона (первый + один ретрай)');
+  assert.equal(r.blocked, true);
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:blocked'), 'уход в blocked');
+  assert.ok(!gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:coding'), 'НЕ в coding');
+  assert.ok(k.readAll().some(e => e.type === 'blocked'), 'журнал blocked');
+});
+
+test('runReviewer: timedOut не ретраится и уходит fail-вердиктом (поведение не изменено)', async () => {
+  const gh = reviewGh(); const k = keeper();
+  let runs = 0;
+  const r = await runReviewer(REV_ARGS(gh, k, async () => {
+    runs++;
+    return { ok: false, result: '', costUsd: 0.1, timedOut: true };
+  }));
+  assert.equal(runs, 1, 'таймаут не ретраим');
+  assert.equal(r.verdict, 'fail');
+  assert.ok(!r.blocked);
+  assert.ok(gh.calls.some(c => c[0] === 'addComment' && c[3].includes('таймаут')));
+  assert.ok(k.readAll().some(e => e.type === 'review' && e.verdict === 'fail'));
 });
 
 test('acceptor: pass → midas:accept + midas:state:accepted; fail → midas:reject + возврат в coding с причинами', async () => {
