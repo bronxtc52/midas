@@ -59,6 +59,24 @@ test('eventToMessage: blocked/ci-gate-red/daily-cap-pause/tick-error', () => {
   assert.match(eventToMessage({ type: 'tick-error', error: 'boom-scrubbed' }, OPTS), /boom-scrubbed/);
 });
 
+// --- tick-error дебаунс: алёрт только при 2+ подряд (issue #22) ---
+
+test('eventToMessage: tick-error consecutive:1 (одиночный транзиент) → null (глушим)', () => {
+  assert.equal(eventToMessage({ type: 'tick-error', error: 'x', consecutive: 1 }, OPTS), null);
+});
+
+test('eventToMessage: tick-error consecutive:2 → строка с текстом ошибки (алёрт)', () => {
+  const m = eventToMessage({ type: 'tick-error', error: 'boom42', consecutive: 2 }, OPTS);
+  assert.equal(typeof m, 'string');
+  assert.match(m, /boom42/, 'строка содержит текст ошибки');
+});
+
+test('eventToMessage: tick-error БЕЗ consecutive → строка (обратная совместимость)', () => {
+  const m = eventToMessage({ type: 'tick-error', error: 'legacy-err' }, OPTS);
+  assert.equal(typeof m, 'string');
+  assert.match(m, /legacy-err/);
+});
+
 // --- makeTelegramNotifier (крит. 5–7) ---
 
 function mockFetch() {

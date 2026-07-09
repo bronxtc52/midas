@@ -75,7 +75,13 @@ export function eventToMessage(event, { monUrl = 'https://mon.adarasoft.com', re
       return `💰 Дневной кап MIDAS исчерпан — пауза до завтра (${event.day})`;
 
     case 'tick-error':
-      return `❗ MIDAS tick-error: ${event.error}`;
+      // Дебаунс: одиночный транзиент (consecutive === 1) глушим — демон обычно
+      // восстанавливается на следующем тике, алёрт был бы шумом. Алёрт только при
+      // 2+ подряд. Событие БЕЗ поля consecutive (старые записи) → шлём (обр. совместимость).
+      if (typeof event.consecutive === 'number' && event.consecutive < 2) return null;
+      return typeof event.consecutive === 'number'
+        ? `❗ MIDAS tick-error (${event.consecutive}-й подряд): ${event.error}`
+        : `❗ MIDAS tick-error: ${event.error}`;
 
     case 'action': {
       // Переходы конвейера. awaiting-approval — через спец-событие (дубля не даём);
