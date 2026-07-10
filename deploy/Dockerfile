@@ -2,7 +2,10 @@ FROM node:20-slim
 
 # System deps: git (Worker checkouts), curl+ca-certificates (gh install + healthcheck),
 # gnupg (apt key for the GitHub CLI repo).
+# apt-get upgrade: базовый node:20-slim отстаёт от security-патчей Debian
+# (libgnutls30 CVE-2026-33845/42010) — trivy-контур watchdog алёртит по образу.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends git curl ca-certificates gnupg \
     && mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
