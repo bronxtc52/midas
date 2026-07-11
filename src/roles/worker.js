@@ -14,7 +14,36 @@ function gitEnvWithAskpass(workRoot, token) {
   return { GIT_ASKPASS: helper, MIDAS_GIT_TOKEN: token, GIT_TERMINAL_PROMPT: '0' };
 }
 
-function workerPrompt(issue, plan, rejectFeedback) {
+// Хвост лога упавшего CI-job'а капим по образцу DIFF_CAP (reviewer.js): огромный лог
+// раздувает промпт (стоимость/латентность) и рискует E2BIG в argv. Держим хвост —
+// причина падения обычно в конце вывода.
+const LOG_CAP = 24_000;
+
+// CI-блок промпта rework-сессии (issue #30): имена упавших чеков + их summary +
+// усечённый хвост лога + явная инструкция. Пусто, если ciFailure не задан
+// (первичный coding) или список чеков пуст → промпт как прежде.
+function ciFailureBlock(ciFailure) {
+  const checks = ciFailure && Array.isArray(ciFailure.checks) ? ciFailure.checks : [];
+  if (checks.length === 0) return [];
+  const out = [
+    '',
+    '# CI КРАСНЫЙ (после ci-gate-red) — почини причину падения',
+    'Обязательные чеки PR упали. Не заключай, что план уже реализован, — CI говорит обратное.',
+    'Упавшие чеки:',
+    ...checks.map((c) => `- ${c.name}${c.summary ? ` — ${c.summary}` : ''}`),
+  ];
+  let log = ciFailure.log || '';
+  if (log) {
+    if (log.length > LOG_CAP) log = '[... начало лога усечено обвязкой ...]\n' + log.slice(-LOG_CAP);
+    out.push('', 'Хвост лога упавшего job\'а:', '```', log, '```');
+  }
+  out.push('',
+    'CI красный по этим чекам — почини причину падения; выйти без изменений можно только если '
+    + 'падение не связано с кодом ветки (тогда объясни в BLOCKED).');
+  return out;
+}
+
+function workerPrompt(issue, plan, rejectFeedback, ciFailure) {
   return [
     'Ты — Worker фабрики MIDAS. Реализуй план ниже в текущем git-каталоге.',
     'Правила (Конституция): не меняй план; не трогай файлы вне плана; существующие тесты не менять;',
@@ -28,10 +57,11 @@ function workerPrompt(issue, plan, rejectFeedback) {
     '# План (Planner)',
     plan,
     ...(rejectFeedback ? ['', '# Замечания Acceptor/Reviewer с прошлого круга (устрани их)', rejectFeedback] : []),
+    ...ciFailureBlock(ciFailure),
   ].join('\n');
 }
 
-export async function runWorker({ gh, keeper, config, repo, issue, plan, remoteUrl, gitToken, workRoot, claudeRun, day, rejectFeedback }) {
+export async function runWorker({ gh, keeper, config, repo, issue, plan, remoteUrl, gitToken, workRoot, claudeRun, day, rejectFeedback, ciFailure }) {
   const task = `${repo}#${issue.number}`;
   const branch = `midas/issue-${issue.number}`;
   const block = makeBlock({ gh, keeper, config, repo, issue, fromLabel: config.labels.coding });
@@ -61,7 +91,7 @@ export async function runWorker({ gh, keeper, config, repo, issue, plan, remoteU
   else git(['checkout', '-b', branch]);
 
   const s = await claudeRun({
-    prompt: workerPrompt(issue, plan, rejectFeedback),
+    prompt: workerPrompt(issue, plan, rejectFeedback, ciFailure),
     cwd,
     maxTurns: config.session_max_turns,
     timeoutSec: config.session_timeout_sec,

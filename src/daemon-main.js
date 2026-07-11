@@ -62,6 +62,26 @@ async function lastRejectComment(repo, n) {
   return rejects.length ? rejects[rejects.length - 1].body : null;
 }
 
+// Rework после ci-gate-red (issue #30): если по ветке есть открытый PR с красными
+// чеками — собираем контекст падения (имена упавших чеков + best-effort хвост лога),
+// чтобы Worker чинил причину, а не выходил с пустым диффом → ложный blocked.
+// Первичный coding: PR ещё нет / чеки не красные → undefined → промпт без CI-блока.
+// Сбор best-effort: любая ошибка GH тут не роняет rework (деградация до без-контекста);
+// failedCheckLog внутри уже глотает свою ошибку → log='' при живых именах чеков.
+async function collectCiFailure(repo, n) {
+  try {
+    const pr = await gh.getPRForBranch(repo, `midas/issue-${n}`);
+    if (!pr) return undefined;
+    if ((await gh.checksStatus(repo, pr.head.sha)) !== 'red') return undefined;
+    const checks = await gh.failedChecks(repo, pr.head.sha);
+    if (!checks.length) return undefined;
+    const log = await gh.failedCheckLog(repo, checks[0].id);
+    return { checks, log };
+  } catch {
+    return undefined;
+  }
+}
+
 // Сессии ролей ограничены явным allowlist инструментов: файлы читать/править можно,
 // Bash и сеть — нельзя (Конституция §1: минимальные полномочия, git делает обвязка).
 // GH_TOKEN сессии не выдаётся вовсе — он нужен только обвязке. DEEPSEEK_API_KEY
@@ -90,8 +110,9 @@ const roles = {
       return runPlanner({ gh, keeper, config, repo, issue, claudeRun, day, workRoot, fromLabel: config.labels.coding });
     }
     const rejectFeedback = await lastRejectComment(repo, issue.number);
+    const ciFailure = await collectCiFailure(repo, issue.number);
     return runWorker({
-      gh, keeper, config, repo, issue, plan, rejectFeedback,
+      gh, keeper, config, repo, issue, plan, rejectFeedback, ciFailure,
       remoteUrl: remoteUrlOf(repo), gitToken: ghToken, workRoot, claudeRun, day,
     });
   }),
