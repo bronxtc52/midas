@@ -347,7 +347,8 @@ test('extractDoD: нет секции / пустая → пусто', () => {
 test('parseDod: валидный / fence / многострочный → items; мусор → unparsed', () => {
   assert.deepEqual(parseDod('DOD: {"items":[{"item":"a","pass":true}]}').items.length, 1);
   assert.equal(parseDod('DOD:\n```json\n{"items":[{"item":"a","pass":false}]}\n```').items[0].pass, false);
-  assert.equal(parseDod('DOD:\n```\n{"items":[]}\n```').items.length, 0);
+  assert.equal(parseDod('DOD:\n```\n{"items":[]}\n```').unparsed, true, 'пустой items → unparsed (fail-closed)');
+  assert.equal(parseDod('DOD: {"items":[]}').unparsed, true, 'голый пустой items → unparsed (fail-closed)');
   assert.equal(parseDod('DOD: {\n  "items": [\n    {"item":"a","pass":true}\n  ]\n}').items.length, 1);
   assert.equal(parseDod('никакого DOD').unparsed, true);
   assert.equal(parseDod('DOD: {"items":').unparsed, true, 'битый JSON → unparsed');

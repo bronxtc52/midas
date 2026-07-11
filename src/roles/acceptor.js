@@ -41,10 +41,12 @@ export function extractDoD(plan) {
 // Результат DoD-сессии: строка `DOD: {"items":[{"item":...,"pass":...,"evidence":...}]}`.
 // По образцу parseVerdict: толерантен к однострочному/fence/многострочному JSON,
 // берётся сбалансированный `{...}` от первой `{` после ПОСЛЕДНЕГО `DOD:`.
-// Непарсибельно / нет массива items → `{unparsed:true}` (fail-closed: молчание
-// Acceptor'а не принимает код).
+// Непарсибельно / нет массива items / пустой items → `{unparsed:true}`
+// (fail-closed: молчание Acceptor'а не принимает код; секция DoD в плане
+// гарантированно непуста гейтом Planner→Worker, поэтому пустой items — это
+// отказ модели проверять, а не vacuous ACCEPT без единого пункта).
 export function parseDod(text) {
-  const d = parseLastMarkedJson(text, 'DOD:', (o) => Array.isArray(o.items));
+  const d = parseLastMarkedJson(text, 'DOD:', (o) => Array.isArray(o.items) && o.items.length > 0);
   return d == null ? { unparsed: true } : d;
 }
 
