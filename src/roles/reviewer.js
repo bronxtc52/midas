@@ -1,28 +1,4 @@
-import { makeBlock, capExceeded } from './common.js';
-
-// Извлекает первый сбалансированный `{...}`-блок из строки, корректно
-// учитывая строковые литералы JSON и экранирование (скобки внутри
-// `"note":"a{b}"` не ломают счётчик глубины). null — блок не найден.
-function extractBalancedObject(s) {
-  const start = s.indexOf('{');
-  if (start < 0) return null;
-  let depth = 0, inStr = false, esc = false;
-  for (let i = start; i < s.length; i++) {
-    const c = s[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === '\\') esc = true;
-      else if (c === '"') inStr = false;
-    } else if (c === '"') {
-      inStr = true;
-    } else if (c === '{') {
-      depth++;
-    } else if (c === '}') {
-      if (--depth === 0) return s.slice(start, i + 1);
-    }
-  }
-  return null;
-}
+import { makeBlock, capExceeded, extractBalancedObject } from './common.js';
 
 // Вердикт сессии: строка `VERDICT: {"verdict":"pass|fail","findings":[...]}`.
 // Толерантен к реальным форматам вывода модели: однострочный JSON, JSON в
