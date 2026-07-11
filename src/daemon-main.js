@@ -64,8 +64,9 @@ async function lastRejectComment(repo, n) {
 
 // Сессии ролей ограничены явным allowlist инструментов: файлы читать/править можно,
 // Bash и сеть — нельзя (Конституция §1: минимальные полномочия, git делает обвязка).
-// GH_TOKEN сессии не выдаётся вовсе — он нужен только обвязке.
-const { GH_TOKEN: _ghTokenHidden, ...sessionEnv } = process.env;
+// GH_TOKEN сессии не выдаётся вовсе — он нужен только обвязке. DEEPSEEK_API_KEY
+// тоже вырезаем: Council зовёт Node-обвязка Planner'а, не LLM-сессия (спека §3, ADR п.4).
+const { GH_TOKEN: _ghTokenHidden, DEEPSEEK_API_KEY: _deepseekKeyHidden, ...sessionEnv } = process.env;
 const claudeRun = (args) => runSession({
   ...args,
   env: sessionEnv,
