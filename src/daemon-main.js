@@ -94,12 +94,15 @@ const roles = {
       remoteUrl: remoteUrlOf(repo), gitToken: ghToken, workRoot, claudeRun, day,
     });
   }),
-  review: async ({ repo, issue, pr, day }) => {
+  // wrapBlocked: blocked-исход (Reviewer ИЛИ Acceptor) даёт status:'blocked' →
+  // handleReview не ставит дедуп @review:<sha> (тот же sha ревьюится снова после
+  // ручной разблокировки) + уведомление в Sentry, как у остальных ролей.
+  review: wrapBlocked(async ({ repo, issue, pr, day }) => {
     const plan = await lastPlanComment(repo, issue.number);
     const verdict = await runReviewer({ gh, keeper, config, repo, issue, pr, plan, rubric, claudeRun, day, workRoot });
     if (verdict.blocked) return { status: 'blocked' };
-    return runAcceptor({ gh, config, repo, issue, verdict });
-  },
+    return runAcceptor({ gh, keeper, config, repo, issue, pr, verdict, plan, claudeRun, day, workRoot });
+  }),
 };
 
 // Heartbeat независим от tick'а: длинная Worker-сессия (до 30 мин) не должна

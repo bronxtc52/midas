@@ -8,7 +8,7 @@ import { makeKeeper } from '../src/keeper.js';
 import { runPlanner, validatePlan, extractGoal } from '../src/roles/planner.js';
 import { runWorker } from '../src/roles/worker.js';
 import { parseVerdict, runReviewer } from '../src/roles/reviewer.js';
-import { runAcceptor } from '../src/roles/acceptor.js';
+import { runAcceptor, extractDoD, parseDod } from '../src/roles/acceptor.js';
 
 const CONFIG = {
   cost_cap_usd_per_task: 5, cost_cap_usd_per_day: 20,
@@ -327,16 +327,122 @@ test('runReviewer: timedOut не ретраится и уходит fail-вер�
   assert.ok(k.readAll().some(e => e.type === 'review' && e.verdict === 'fail'));
 });
 
-test('acceptor: pass → midas:accept + midas:state:accepted; fail → midas:reject + возврат в coding с причинами', async () => {
-  let gh = ghStub();
-  await runAcceptor({ gh, config: CONFIG, repo: 'o/r', issue: { number: 3 }, verdict: { verdict: 'pass', findings: [] } });
-  assert.ok(gh.calls.some(c => c[0] === 'addLabels' && c[3].includes('midas:accept')));
-  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:accepted'));
+// ---- Acceptor: DoD-проверка (Конституция §5) ----
 
-  gh = ghStub();
-  await runAcceptor({ gh, config: CONFIG, repo: 'o/r', issue: { number: 3 }, verdict: { verdict: 'fail', findings: [{ severity: 'high', note: 'сломано' }] } });
+const DOD_PLAN = '## Цель\nx\n## DoD\n- [ ] пункт про файл\n- [ ] пункт про тест\n## Риски\nr';
+
+test('extractDoD: вырезает секцию ## DoD, когда она НЕ последняя', () => {
+  assert.equal(extractDoD(DOD_PLAN), '- [ ] пункт про файл\n- [ ] пункт про тест');
+});
+test('extractDoD: DoD — последняя секция', () => {
+  assert.equal(extractDoD('## Цель\nx\n## DoD\n- [ ] один пункт'), '- [ ] один пункт');
+});
+test('extractDoD: нет секции / пустая → пусто', () => {
+  assert.equal(extractDoD('## Цель\nx\n## Риски\nr'), '');
+  assert.equal(extractDoD('## Цель\nx\n## DoD\n\n## Риски\nr'), '', 'пустая DoD → пусто');
+  assert.equal(extractDoD(''), '');
+  assert.equal(extractDoD(null), '');
+});
+
+test('parseDod: валидный / fence / многострочный → items; мусор → unparsed', () => {
+  assert.deepEqual(parseDod('DOD: {"items":[{"item":"a","pass":true}]}').items.length, 1);
+  assert.equal(parseDod('DOD:\n```json\n{"items":[{"item":"a","pass":false}]}\n```').items[0].pass, false);
+  assert.equal(parseDod('DOD:\n```\n{"items":[]}\n```').items.length, 0);
+  assert.equal(parseDod('DOD: {\n  "items": [\n    {"item":"a","pass":true}\n  ]\n}').items.length, 1);
+  assert.equal(parseDod('никакого DOD').unparsed, true);
+  assert.equal(parseDod('DOD: {"items":').unparsed, true, 'битый JSON → unparsed');
+  assert.equal(parseDod('DOD: {"foo":1}').unparsed, true, 'нет массива items → unparsed');
+});
+test('parseDod: берётся ПОСЛЕДНЕЕ вхождение DOD: и баланс скобок', () => {
+  const t = 'сначала про формат DOD:\nDOD: {"items":[{"item":"a{b}","pass":true,"evidence":"x"}]} — конец';
+  const d = parseDod(t);
+  assert.equal(d.items[0].item, 'a{b}', 'скобки в строке не ломают баланс');
+});
+
+const ACC_ARGS = (gh, k, claudeRun, verdict, plan = DOD_PLAN) => ({
+  gh, keeper: k, config: CONFIG, repo: 'o/r',
+  issue: { number: 3, title: 't', body: 'b' }, pr: { number: 33 },
+  verdict, plan, claudeRun, day: '2026-07-03', workRoot: '/tmp',
+});
+
+test('acceptor: verdict=pass + все DoD-пункты pass → ACCEPT (session ровно 1 раз)', async () => {
+  const gh = reviewGh(); const k = keeper();
+  let runs = 0;
+  const r = await runAcceptor(ACC_ARGS(gh, k, async () => {
+    runs++;
+    return { ok: true, result: 'DOD: {"items":[{"item":"файл","pass":true,"evidence":"ок"},{"item":"тест","pass":true,"evidence":"ок"}]}', costUsd: 0.1, timedOut: false };
+  }, { verdict: 'pass', findings: [] }));
+  assert.equal(runs, 1, 'DoD-сессия вызвана ровно один раз');
+  assert.equal(r.status, 'accepted');
+  assert.ok(gh.calls.some(c => c[0] === 'addLabels' && c[3].includes('midas:accept')));
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'midas:state:review' && c[4] === 'midas:state:accepted'));
+});
+
+test('acceptor: verdict=pass + один pass:false → REJECT, коммент несёт пункт, review→coding', async () => {
+  const gh = reviewGh(); const k = keeper();
+  const r = await runAcceptor(ACC_ARGS(gh, k, async () =>
+    ({ ok: true, result: 'DOD: {"items":[{"item":"файл создан","pass":true,"evidence":"ок"},{"item":"нет теста","pass":false,"evidence":"тест отсутствует в диффе"}]}', costUsd: 0.1, timedOut: false }),
+    { verdict: 'pass', findings: [] }));
+  assert.equal(r.status, 'rejected');
+  assert.ok(gh.calls.some(c => c[0] === 'addLabels' && c[3].includes('midas:reject')));
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[3] === 'midas:state:review' && c[4] === 'midas:state:coding'));
+  const comment = gh.calls.find(c => c[0] === 'addComment');
+  assert.match(comment[3], /нет теста/, 'коммент ссылается на непройденный пункт');
+  assert.match(comment[3], /тест отсутствует в диффе/, 'коммент несёт evidence');
+});
+
+test('acceptor: verdict=fail → REJECT без вызова Claude-сессии', async () => {
+  const gh = reviewGh(); const k = keeper();
+  let sessionCalled = false;
+  const r = await runAcceptor(ACC_ARGS(gh, k, async () => { sessionCalled = true; return { ok: true, result: '', costUsd: 0, timedOut: false }; },
+    { verdict: 'fail', findings: [{ severity: 'high', note: 'сломано' }] }));
+  assert.equal(r.status, 'rejected');
+  assert.equal(sessionCalled, false, 'при fail LLM-сессия не запускается');
   assert.ok(gh.calls.some(c => c[0] === 'addLabels' && c[3].includes('midas:reject')));
   assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:coding'));
-  const comment = gh.calls.find(c => c[0] === 'addComment');
-  assert.match(comment[3], /сломано/);
+  assert.match(gh.calls.find(c => c[0] === 'addComment')[3], /сломано/);
+});
+
+test('acceptor: DOD непарсибелен дважды → blocked, ни accept, ни reject не выставлены', async () => {
+  const gh = reviewGh(); const k = keeper();
+  let runs = 0;
+  const r = await runAcceptor(ACC_ARGS(gh, k, async () => { runs++; return { ok: true, result: 'без формата', costUsd: 0.1, timedOut: false }; },
+    { verdict: 'pass', findings: [] }));
+  assert.equal(runs, 2, 'первый прогон + один ретрай');
+  assert.equal(r.status, 'blocked');
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:blocked'));
+  assert.ok(!gh.calls.some(c => c[0] === 'addLabels' && (c[3].includes('midas:accept') || c[3].includes('midas:reject'))), 'ни accept, ни reject (fail-closed)');
+  assert.ok(!gh.calls.some(c => c[0] === 'transitionState' && (c[4] === 'midas:state:accepted' || c[4] === 'midas:state:coding')));
+  assert.equal(k.costForTask('o/r#3'), 0.2, 'addCost на каждый прогон');
+});
+
+test('acceptor: таймаут DoD-сессии → сразу blocked (без ретрая)', async () => {
+  const gh = reviewGh(); const k = keeper();
+  let runs = 0;
+  const r = await runAcceptor(ACC_ARGS(gh, k, async () => { runs++; return { ok: false, result: '', costUsd: 0.1, timedOut: true }; },
+    { verdict: 'pass', findings: [] }));
+  assert.equal(runs, 1, 'таймаут не ретраим');
+  assert.equal(r.status, 'blocked');
+  assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:blocked'));
+});
+
+test('acceptor: кап задачи исчерпан → blocked ДО DoD-сессии', async () => {
+  const gh = reviewGh(); const k = keeper();
+  k.addCost({ task: 'o/r#3', usd: 5, day: '2026-07-03' });
+  let sessionCalled = false;
+  const r = await runAcceptor(ACC_ARGS(gh, k, async () => { sessionCalled = true; return { ok: true, result: 'DOD: {"items":[]}', costUsd: 0, timedOut: false }; },
+    { verdict: 'pass', findings: [] }));
+  assert.equal(r.status, 'blocked');
+  assert.equal(sessionCalled, false, 'пре-чек капа не пускает DoD-сессию');
+});
+
+test('acceptor: план/секция DoD отсутствует → blocked, сессия не запускалась', async () => {
+  const gh = reviewGh(); const k = keeper();
+  let sessionCalled = false;
+  const cr = async () => { sessionCalled = true; return { ok: true, result: 'DOD: {"items":[]}', costUsd: 0, timedOut: false }; };
+  const r1 = await runAcceptor(ACC_ARGS(gh, k, cr, { verdict: 'pass', findings: [] }, null));
+  assert.equal(r1.status, 'blocked', 'нет плана → blocked');
+  const r2 = await runAcceptor(ACC_ARGS(reviewGh(), keeper(), cr, { verdict: 'pass', findings: [] }, '## Цель\nx\n## DoD\n\n## Риски\nr'));
+  assert.equal(r2.status, 'blocked', 'пустая секция DoD → blocked');
+  assert.equal(sessionCalled, false, 'DoD-сессия не запускалась без пунктов');
 });
