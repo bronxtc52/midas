@@ -1,4 +1,4 @@
-import { makeBlock, capExceeded, extractBalancedObject } from './common.js';
+import { makeBlock, capExceeded, parseLastMarkedJson } from './common.js';
 
 const DIFF_CAP = 200_000; // как у Reviewer'а: огромный дифф в argv → E2BIG
 
@@ -44,18 +44,8 @@ export function extractDoD(plan) {
 // Непарсибельно / нет массива items → `{unparsed:true}` (fail-closed: молчание
 // Acceptor'а не принимает код).
 export function parseDod(text) {
-  const src = text || '';
-  const idx = src.lastIndexOf('DOD:');
-  if (idx < 0) return { unparsed: true };
-  const json = extractBalancedObject(src.slice(idx + 'DOD:'.length));
-  if (json == null) return { unparsed: true };
-  try {
-    const d = JSON.parse(json);
-    if (!Array.isArray(d.items)) return { unparsed: true };
-    return d;
-  } catch {
-    return { unparsed: true };
-  }
+  const d = parseLastMarkedJson(text, 'DOD:', (o) => Array.isArray(o.items));
+  return d == null ? { unparsed: true } : d;
 }
 
 // Acceptor: только accept/reject, «принять с замечаниями» не существует

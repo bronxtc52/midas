@@ -1,26 +1,18 @@
-import { makeBlock, capExceeded, extractBalancedObject } from './common.js';
+import { makeBlock, capExceeded, parseLastMarkedJson } from './common.js';
 
 // Вердикт сессии: строка `VERDICT: {"verdict":"pass|fail","findings":[...]}`.
 // Толерантен к реальным форматам вывода модели: однострочный JSON, JSON в
-// ```/```json fence, многострочный JSON — берётся сбалансированный `{...}`
-// от первой `{` после ПОСЛЕДНЕГО вхождения `VERDICT:`.
+// ```/```json fence, многострочный JSON — берётся последнее ПАРСИБЕЛЬНОЕ
+// line-anchored вхождение `VERDICT:` (см. parseLastMarkedJson: защита от
+// цитат-шаблонов в self-referential диффах, инцидент midas#9 / PR #27).
 // Непарсибельно = fail с внутренним флагом `unparsed` (осознанно: молчание
 // ревьюера не пропускает код). Флаг отличает сбой парсинга от честного fail.
 export function parseVerdict(text) {
   const unparsed = { verdict: 'fail', findings: [{ severity: 'high', note: 'вердикт не распарсен' }], unparsed: true };
-  const src = text || '';
-  const idx = src.lastIndexOf('VERDICT:');
-  if (idx < 0) return unparsed;
-  const json = extractBalancedObject(src.slice(idx + 'VERDICT:'.length));
-  if (json == null) return unparsed;
-  try {
-    const v = JSON.parse(json);
-    if (v.verdict !== 'pass' && v.verdict !== 'fail') return unparsed;
-    v.findings ??= [];
-    return v;
-  } catch {
-    return unparsed;
-  }
+  const v = parseLastMarkedJson(text, 'VERDICT:', (o) => o.verdict === 'pass' || o.verdict === 'fail');
+  if (v == null) return unparsed;
+  v.findings ??= [];
+  return v;
 }
 
 function reviewerPrompt({ issue, plan, diff, rubric }) {
