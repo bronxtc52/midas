@@ -447,3 +447,29 @@ test('acceptor: план/секция DoD отсутствует → blocked, с
   assert.equal(r2.status, 'blocked', 'пустая секция DoD → blocked');
   assert.equal(sessionCalled, false, 'DoD-сессия не запускалась без пунктов');
 });
+
+// #35: сессии без Bash не должны пытаться выполнять runtime-пункты DoD —
+// промпты явно говорят «нет Bash, CI-гейт уже зелёный, считай подтверждённым CI».
+test('reviewerPrompt содержит инструкцию про отсутствие Bash и runtime-пункты DoD = CI', async () => {
+  const gh = reviewGh(); const k = keeper();
+  let seenPrompt = '';
+  await runReviewer(REV_ARGS(gh, k, async ({ prompt }) => {
+    seenPrompt = prompt;
+    return { ok: true, result: 'VERDICT: {"verdict":"pass","findings":[]}', costUsd: 0.1, timedOut: false };
+  }));
+  assert.match(seenPrompt, /НЕТ Bash/);
+  assert.match(seenPrompt, /зелёного CI-гейта/);
+  assert.match(seenPrompt, /npm test/);
+});
+
+test('acceptorPrompt содержит инструкцию про отсутствие Bash и runtime-пункты DoD = CI', async () => {
+  const gh = reviewGh(); const k = keeper();
+  let seenPrompt = '';
+  await runAcceptor(ACC_ARGS(gh, k, async ({ prompt }) => {
+    seenPrompt = prompt;
+    return { ok: true, result: 'DOD: {"items":[{"item":"a","pass":true,"evidence":"ок"}]}', costUsd: 0.1, timedOut: false };
+  }, { verdict: 'pass', findings: [] }));
+  assert.match(seenPrompt, /НЕТ Bash/);
+  assert.match(seenPrompt, /зелёного CI-гейта/);
+  assert.match(seenPrompt, /CI зелёный \(ci-гейт\)/);
+});
