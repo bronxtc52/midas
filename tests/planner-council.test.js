@@ -45,7 +45,7 @@ test('planner FORK: Council отвечает → 2-й прогон с реком
   assert.ok(gh.calls.some(c => c[0] === 'addComment' && c[3].includes('## Цель')), 'план опубликован');
   assert.ok(gh.calls.some(c => c[0] === 'transitionState' && c[4] === 'midas:state:coding'));
   assert.ok(k.readAll().some(e => e.type === 'council' && e.ok === true), 'журнал council ok:true');
-  assert.equal(k.costForTask('o/r#5'), 1 + 0.2, 'учтён council_cap_usd + две сессии');
+  assert.ok(Math.abs(k.costForTask('o/r#5') - (1 + 0.2)) < 1e-9, 'учтён council_cap_usd + две сессии');
 });
 
 test('planner FORK: gate:plan → 2-й прогон уводит в awaiting-approval', async () => {
