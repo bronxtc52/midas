@@ -132,5 +132,29 @@ export function makeGh({
       if (runs.some((r) => r.status !== 'completed')) return 'pending';
       return 'green';
     },
+
+    // Упавшие чеки коммита (issue #30): rework после ci-gate-red передаёт Worker'у,
+    // ЧТО красное. Тот же check-runs-запрос, что и checksStatus, но фильтр — только
+    // завершённые с плохим conclusion (не success/neutral/skipped). summary — из
+    // output.summary/output.title. id — для best-effort лога (см. failedCheckLog).
+    async failedChecks(repo, ref) {
+      const data = await request(`/repos/${repo}/commits/${ref}/check-runs${q({ per_page: '100' })}`);
+      const runs = data.check_runs ?? [];
+      return runs
+        .filter((r) => r.status === 'completed' && !['success', 'neutral', 'skipped'].includes(r.conclusion))
+        .map((r) => ({ name: r.name, summary: (r.output && (r.output.summary || r.output.title)) || '', id: r.id }));
+    },
+
+    // Best-effort хвост лога упавшего job'а (issue #30). Actions job logs — raw-текст.
+    // При ЛЮБОЙ ошибке возвращаем '' (деградация, не блокер): id check-run'а может не
+    // совпасть с id Actions-job'а, лог может быть zip/redirect, репо — без Actions.
+    // Rework в этом случае идёт с именами чеков, но без лога.
+    async failedCheckLog(repo, id) {
+      try {
+        return await request(`/repos/${repo}/actions/jobs/${id}/logs`, { raw: true });
+      } catch {
+        return '';
+      }
+    },
   };
 }
