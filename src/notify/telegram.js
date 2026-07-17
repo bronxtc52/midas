@@ -7,6 +7,11 @@
 // Plain text без parse_mode → HTML-escape не нужен, сырой URL Telegram авто-линкует
 // (обходим parse-грабли, KB lessons/telegram-llm-markdown-html.md).
 
+// Степень двойки — точки бэкоффа для алёртов о непрекращающейся ошибке (2,4,8,16,…).
+function isPowerOfTwo(n) {
+  return Number.isInteger(n) && n >= 2 && (n & (n - 1)) === 0;
+}
+
 // Извлечь номер issue из task-строки вида "owner/repo#5".
 function issueNoOf(task) {
   const m = /#(\d+)\s*$/.exec(String(task || ''));
@@ -74,14 +79,21 @@ export function eventToMessage(event, { monUrl = 'https://mon.adarasoft.com', re
     case 'daily-cap-pause':
       return `💰 Дневной кап MIDAS исчерпан — пауза до завтра (${event.day})`;
 
-    case 'tick-error':
-      // Дебаунс: одиночный транзиент (consecutive === 1) глушим — демон обычно
-      // восстанавливается на следующем тике, алёрт был бы шумом. Алёрт только при
-      // 2+ подряд. Событие БЕЗ поля consecutive (старые записи) → шлём (обр. совместимость).
-      if (typeof event.consecutive === 'number' && event.consecutive < 2) return null;
-      return typeof event.consecutive === 'number'
-        ? `❗ MIDAS tick-error (${event.consecutive}-й подряд): ${event.error}`
-        : `❗ MIDAS tick-error: ${event.error}`;
+    case 'tick-error': {
+      // Бэкофф: одиночный транзиент глушим (демон обычно восстанавливается на следующем
+      // тике), дальше алёртим на степенях двойки — 2,4,8,16,… Длинный сбой при тике в 45с
+      // иначе даёт ~80 сообщений/час: шторм GitHub 503 2026-07-16 прислал 112 штук.
+      // Событие БЕЗ consecutive (старые записи) → шлём (обр. совместимость).
+      if (typeof event.consecutive !== 'number') return `❗ MIDAS tick-error: ${event.error}`;
+      if (!isPowerOfTwo(event.consecutive)) return null;
+      return `❗ MIDAS tick-error (${event.consecutive}-й подряд): ${event.error}`;
+    }
+
+    case 'tick-recovered':
+      // Парная к tick-error: закрывает инцидент, о котором алёртили. Про сбой, о котором
+      // промолчали (одиночный транзиент), не сообщаем — иначе шум на ровном месте.
+      if (!(typeof event.consecutive === 'number' && event.consecutive >= 2)) return null;
+      return `✅ MIDAS восстановился (было ${event.consecutive} ошибок подряд, последняя: ${event.error})`;
 
     case 'action': {
       // Переходы конвейера. awaiting-approval — через спец-событие (дубля не даём);

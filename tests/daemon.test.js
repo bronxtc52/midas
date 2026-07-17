@@ -174,4 +174,25 @@ test('tick-error дебаунс: consecutive растёт подряд; успе
   assert.equal(errs[0].consecutive, 1, 'первая ошибка → consecutive=1');
   assert.equal(errs[1].consecutive, 2, 'вторая подряд → consecutive>=2 (алёрт)');
   assert.equal(errs[2].consecutive, 1, 'успешный tick сбросил счётчик → снова 1');
+
+  // Серия из 2 ошибок дошла до алёрта → успешный tick обязан закрыть инцидент (issue #37).
+  const rec = keeper.readAll().filter((e) => e.type === 'tick-recovered');
+  assert.equal(rec.length, 1, 'восстановление после серии 2+ пишется в журнал ровно один раз');
+  assert.equal(rec[0].consecutive, 2, 'recovery называет, сколько ошибок было подряд');
+  assert.match(rec[0].error, /boom/, 'recovery называет последнюю ошибку серии');
+});
+
+test('tick-recovered НЕ пишется после одиночного транзиента — о нём не алёртили (issue #37)', async () => {
+  // Ошибка только на 1-м тике → consecutive=1 (Telegram промолчал) → закрывать нечего.
+  let n = 0;
+  const heartbeat = () => { n++; if (n === 1) throw new Error('single-blip'); };
+  const gh = { listUpdatedIssues: async () => [], listIssues: async () => [] };
+  const keeper = makeKeeper(mkdtempSync(join(tmpdir(), 'midas-tickrec-')), { now: () => 't' });
+  const daemon = makeDaemon({ gh, keeper, config: { ...CONFIG, poll_interval_sec: 0.01 }, roles: {}, log: () => {}, heartbeat });
+  daemon.start();
+  const deadline = Date.now() + 2000;
+  while (n < 4 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+  daemon.stop();
+  assert.equal(keeper.readAll().filter((e) => e.type === 'tick-recovered').length, 0,
+    'одиночный транзиент не порождает recovery-сообщения');
 });

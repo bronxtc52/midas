@@ -8,10 +8,13 @@ const scrub = (s) => String(s).replace(/x-access-token:[^@]+@/g, '***@');
 export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbeat = () => {}, notify = () => {}, overlapSec = 120, health = healthSnapshot }) {
   let timer = null;
   let ticking = false;
-  // Дебаунс tick-error для Telegram: считаем ОШИБКИ ПОДРЯД. Единичный транзиент
+  // Бэкофф tick-error для Telegram: считаем ОШИБКИ ПОДРЯД. Единичный транзиент
   // (напр. разовый 401 GitHub, демон восстанавливается на следующем тике) не должен
-  // слать алёрт — глушим в notifier'е, когда consecutive < 2. Журнал пишет КАЖДУЮ.
+  // слать алёрт; длинный сбой не должен слать его на каждом тике — notifier алёртит
+  // на степенях двойки. Журнал пишет КАЖДУЮ ошибку. lastTickError нужен, чтобы
+  // событие tick-recovered назвало, что именно чинилось.
   let consecutiveTickErrors = 0;
+  let lastTickError = null;
 
   async function handleReview(repo, issue, day) {
     const branch = `midas/issue-${issue.number}`;
@@ -152,13 +155,19 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
         ticking = true;
         try {
           await tick();
-          // Успешный tick (без throw) → серия ошибок прервана, счётчик обнуляем.
+          // Успешный tick (без throw) → серия ошибок прервана. Инцидент, о котором алёртили,
+          // закрываем парным событием: иначе владелец видит «сломалось» и никогда — «починилось».
+          if (consecutiveTickErrors >= 2) {
+            keeper.append({ type: 'tick-recovered', error: lastTickError, consecutive: consecutiveTickErrors });
+          }
           consecutiveTickErrors = 0;
+          lastTickError = null;
         } catch (e) {
           // scrub: сообщения git-ошибок могут содержать credential-URL
           consecutiveTickErrors++;
+          lastTickError = scrub(e.message);
           log(`tick error: ${scrub(e.message)}`);
-          // consecutive в журнале: notifier глушит Telegram при <2 (одиночный транзиент),
+          // consecutive в журнале: notifier шлёт в Telegram по бэкоффу (2,4,8,16,…),
           // но аудит-запись пишется ВСЕГДА (в т.ч. для одиночной ошибки).
           keeper.append({ type: 'tick-error', error: scrub(e.message), consecutive: consecutiveTickErrors });
           notify('tick-error', scrub(e.message));

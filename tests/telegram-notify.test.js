@@ -77,6 +77,27 @@ test('eventToMessage: tick-error БЕЗ consecutive → строка (обрат
   assert.match(m, /legacy-err/);
 });
 
+// --- tick-error бэкофф: длинный сбой не должен слать алёрт на КАЖДОМ тике (issue #37) ---
+
+test('eventToMessage: tick-error бэкофф — алёрт только на степенях двойки', () => {
+  const alerted = [];
+  for (let c = 1; c <= 113; c++) {
+    if (eventToMessage({ type: 'tick-error', error: 'gh-503', consecutive: c }, OPTS)) alerted.push(c);
+  }
+  assert.deepEqual(alerted, [2, 4, 8, 16, 32, 64], 'алёрт на 2,4,8,16,32,64 — не на каждом тике');
+});
+
+test('eventToMessage: tick-recovered → сообщение о восстановлении с числом ошибок', () => {
+  const m = eventToMessage({ type: 'tick-recovered', consecutive: 113, error: 'gh-503' }, OPTS);
+  assert.equal(typeof m, 'string');
+  assert.match(m, /113/, 'называет, сколько ошибок было подряд');
+  assert.match(m, /gh-503/, 'называет последнюю ошибку');
+});
+
+test('eventToMessage: tick-recovered после одиночного транзиента → null (о нём не алёртили)', () => {
+  assert.equal(eventToMessage({ type: 'tick-recovered', consecutive: 1, error: 'x' }, OPTS), null);
+});
+
 // --- makeTelegramNotifier (крит. 5–7) ---
 
 function mockFetch() {
