@@ -1,11 +1,18 @@
-import { mkdirSync, readFileSync, writeFileSync, appendFileSync, renameSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, appendFileSync, renameSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+
+// Порог ротации журнала: при достижении текущий journal.jsonl переименовывается
+// в journal.jsonl.1, запись продолжается в свежий файл. Хранятся ровно две
+// генерации — данные старше двух генераций теряются by design (десятки тысяч
+// событий на генерацию, к этому моменту соответствующие issues давно закрыты).
+const ROTATE_THRESHOLD_BYTES = 5 * 1024 * 1024;
 
 // Keeper: JSONL-журнал (только вперёд, без правок прошлого), курсор per-repo,
 // агрегаты стоимости. Всё восстанавливается из файлов при рестарте.
-export function makeKeeper(dataDir, { now = () => new Date().toISOString(), onAppend } = {}) {
+export function makeKeeper(dataDir, { now = () => new Date().toISOString(), onAppend, rotateThreshold = ROTATE_THRESHOLD_BYTES } = {}) {
   mkdirSync(dataDir, { recursive: true });
   const journalPath = join(dataDir, 'journal.jsonl');
+  const journalRotatedPath = join(dataDir, 'journal.jsonl.1');
   const cursorPath = join(dataDir, 'cursor.json');
 
   const events = [];
@@ -22,8 +29,9 @@ export function makeKeeper(dataDir, { now = () => new Date().toISOString(), onAp
     }
   }
 
-  if (existsSync(journalPath)) {
-    for (const line of readFileSync(journalPath, 'utf8').split('\n')) {
+  function replayFile(path) {
+    if (!existsSync(path)) return;
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
       if (!line.trim()) continue;
       // Оборванная строка (kill посреди записи, полный диск) не должна
       // превращать restart:always в вечный crash-loop — скип с warn.
@@ -35,11 +43,22 @@ export function makeKeeper(dataDir, { now = () => new Date().toISOString(), onAp
     }
   }
 
+  // .1 содержит более старые записи → читаем его первым, чтобы хронологический
+  // порядок событий (и, значит, порядок восстановления агрегатов) сохранялся.
+  replayFile(journalRotatedPath);
+  replayFile(journalPath);
+
   let cursors = existsSync(cursorPath) ? JSON.parse(readFileSync(cursorPath, 'utf8')) : {};
 
   return {
     append(event) {
       const e = { ts: now(), ...event };
+      // Ротация по размеру: если текущий журнал перевалил порог — переименовать
+      // его в .1 (перезаписав старую генерацию, если была), новое событие пишем
+      // в свежий journal.jsonl. renameSync атомарен и перезаписывает цель.
+      if (existsSync(journalPath) && statSync(journalPath).size >= rotateThreshold) {
+        renameSync(journalPath, journalRotatedPath);
+      }
       appendFileSync(journalPath, JSON.stringify(e) + '\n');
       absorb(e);
       // Подписчик (напр. Telegram-нотификатор) — best-effort: его сбой не должен
