@@ -2,7 +2,7 @@
   "repos_allowlist": ["bronxtc52/midas", "bronxtc52/server-watchdog", "bronxtc52/businessman"],
   "poll_interval_sec": 45,
   "cost_cap_usd_per_task": 5,
-  "cost_cap_usd_per_day": 20,
+  "cost_cap_usd_per_day": 40,
   "health_urls": {
     "bronxtc52/server-watchdog": "https://mon.adarasoft.com/",
     "bronxtc52/businessman": "https://news.adarasoft.com/"
