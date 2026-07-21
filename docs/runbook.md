@@ -12,10 +12,12 @@ docker compose down                   # стоп
 
 ## Наблюдение
 - Журнал Keeper'а: `~/projects/Midas/data/journal.jsonl` (append-only; события
-  action/blocked/cost/race-skip/ci-gate-red/tick-error).
+  action/blocked/cost/race-skip/ci-gate-red/tick-error + изоляция:
+  issue-error/repo-error и парные issue-recovered/repo-recovered).
 - Heartbeat: `data/heartbeat` (обновляется каждые 30 с независимо от tick'а;
   healthcheck краснеет при отставании >180 с = процесс мёртв).
-- Sentry (когда подключён): события `MIDAS blocked|tick-error|daily-cap`.
+- Sentry (когда подключён): события `MIDAS blocked|tick-error|issue-error|repo-error|daily-cap`
+  (первые четыре — level=error).
 - Watchdog: сервис `midas` в fleet-реестре server-watchdog (docker-чек).
 
 ## Выход задачи из blocked (только человек, Конституция §3)
@@ -40,6 +42,20 @@ bash deploy/fetch-env.sh && cd deploy && docker compose up -d   # перечит
 ## Rate-limit GitHub
 Демон сам ждёт `x-ratelimit-reset` (кап 60 с) и ретраит один раз; постоянные
 403 в `tick-error` журнала = проверить лимиты токена (`gh api rate_limit`).
+
+## Изоляция ошибок тика (PR #42, инцидент 2026-07-21)
+Ошибка одной задачи или одного репо **не роняет тик** — остальной конвейер работает.
+До фикса 403 от Checks API на одном PR остановил всю фабрику на 203 тика подряд.
+- `issue-error` / `repo-error` в журнале = сбой изолирован; в Telegram уходит на
+  степенях двойки подряд-ошибок (2,4,8,…), парное `*-recovered` — когда починилось.
+- **Ретрай упавшей задачи с кулдауном** `min(45с·2^(n−1), 1ч)`: скип происходит ДО
+  запроса к GitHub, т.е. персистентная ошибка не жжёт ни rate-limit, ни LLM-деньги.
+- Курсор репо не уходит дальше самого старого упавшего/скипнутого issue — задача
+  остаётся в выборке и переживает рестарт (счётчики in-memory: рестарт = один
+  немедленный ретрай, дальше снова бэкофф).
+- Что смотреть при разборе: `jq 'select(.type|test("issue-error|repo-error"))' data/journal.jsonl`
+  — поле `consecutive` показывает длину серии, `error` — текст (credential-URL вычищены `scrub`).
+- Пропали ли ошибки: ищи `issue-recovered`/`repo-recovered` с тем же `repo`/`issue`.
 
 ## Council (второе мнение для развилок Planner'а)
 - Planner различает АРХИТЕКТУРНУЮ развилку (маркер `FORK:`, 2–3 взаимоисключающих
