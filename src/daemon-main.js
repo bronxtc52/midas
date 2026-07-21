@@ -137,7 +137,7 @@ const daemon = makeDaemon({
   gh, keeper, config, roles,
   log: (m) => console.log(`[midas] ${m}`),
   heartbeat: beat,
-  notify: (kind, msg) => sentry?.captureMessage(`MIDAS ${kind}: ${msg}`, kind === 'tick-error' ? 'error' : 'warning'),
+  notify: (kind, msg) => sentry?.captureMessage(`MIDAS ${kind}: ${msg}`, ['tick-error', 'issue-error', 'repo-error'].includes(kind) ? 'error' : 'warning'),
 });
 
 console.log(`[midas] демон стартует: ${config.repos_allowlist.join(', ')}, tick=${config.poll_interval_sec}с`);

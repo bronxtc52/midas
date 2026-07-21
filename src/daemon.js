@@ -5,7 +5,7 @@ import { healthSnapshot } from './health.js';
 // содержимого задач (Конституция §2). Одна задача за раз (v1).
 const scrub = (s) => String(s).replace(/x-access-token:[^@]+@/g, '***@');
 
-export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbeat = () => {}, notify = () => {}, overlapSec = 120, health = healthSnapshot }) {
+export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbeat = () => {}, notify = () => {}, overlapSec = 120, health = healthSnapshot, now = () => Date.now() }) {
   let timer = null;
   let ticking = false;
   // Бэкофф tick-error для Telegram: считаем ОШИБКИ ПОДРЯД. Единичный транзиент
@@ -15,6 +15,21 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
   // событие tick-recovered назвало, что именно чинилось.
   let consecutiveTickErrors = 0;
   let lastTickError = null;
+  // Изоляция главного цикла (инцидент 2026-07-21: 403 check-runs ОДНОГО репо валил
+  // весь tick — 203 tick-error подряд, фабрика стояла целиком). Ошибка одной задачи /
+  // одного репо не должна останавливать остальные. Счётчики — in-memory, как
+  // consecutiveTickErrors: рестарт сбрасывает их осознанно (один немедленный ретрай,
+  // дальше снова бэкофф) — консистентно с существующим tick-error поведением.
+  const issueErrors = new Map(); // `repo#num` → { consecutive, nextRetryAt, error }
+  const repoErrors = new Map(); // repo → { consecutive, error }
+
+  // Бэкофф САМОГО ретрая, не только алёрта: персистентная ошибка иначе молотит
+  // GitHub (и LLM-роль — деньги) каждые poll_interval_sec. Одиночный транзиент
+  // ретраится следующим тиком, серия — экспоненциально до часа.
+  function retryCooldownMs(consecutive) {
+    if (consecutive < 2) return 0;
+    return Math.min(config.poll_interval_sec * 1000 * 2 ** (consecutive - 1), 3_600_000);
+  }
 
   async function handleReview(repo, issue, day) {
     const branch = `midas/issue-${issue.number}`;
@@ -98,53 +113,129 @@ export function makeDaemon({ gh, keeper, config, roles, log = () => {}, heartbea
     }
 
     for (const repo of config.repos_allowlist) {
-      const cursor = keeper.getCursor(repo);
-      // Холодный старт: БЕЗ since — GitHub на since=1970 отвечает пустым списком.
-      const since = cursor
-        ? new Date(new Date(cursor).getTime() - overlapSec * 1000).toISOString()
-        : null;
-      const briefs = await gh.listUpdatedIssues(repo, since);
-      // Ожидающие CI review-issue не меняют updated_at и выпадают из since-окна
-      // (starvation) — выбираем их отдельно по лейблу, без since.
-      const reviewing = (await gh.listIssues(repo, { label: config.labels.review })).filter((i) => !i.pull_request);
-      const byNumber = new Map([...briefs, ...reviewing].map((i) => [i.number, i]));
+      // Per-repo изоляция: упавшая выборка одного репо не мешает остальным.
+      // Кулдаун на уровне репо не нужен: ретрай = 1 list-вызов/тик — обычная
+      // цена поллинга, амплификации нет.
+      try {
+        const cursor = keeper.getCursor(repo);
+        // Холодный старт: БЕЗ since — GitHub на since=1970 отвечает пустым списком.
+        const since = cursor
+          ? new Date(new Date(cursor).getTime() - overlapSec * 1000).toISOString()
+          : null;
+        const briefs = await gh.listUpdatedIssues(repo, since);
+        // Ожидающие CI review-issue не меняют updated_at и выпадают из since-окна
+        // (starvation) — выбираем их отдельно по лейблу, без since.
+        const reviewing = (await gh.listIssues(repo, { label: config.labels.review })).filter((i) => !i.pull_request);
+        const byNumber = new Map([...briefs, ...reviewing].map((i) => [i.number, i]));
 
-      let maxUpdated = cursor;
-      for (const brief of byNumber.values()) {
-        // Дневной кап перепроверяется на каждой задаче: одна tick-пачка
-        // не должна прошивать лимит насквозь
-        if (keeper.costForDay(day) >= config.cost_cap_usd_per_day) {
-          keeper.append({ type: 'daily-cap-pause', day });
-          notify('daily-cap', `дневной кап $${config.cost_cap_usd_per_day} исчерпан посреди tick (${day})`);
-          break;
-        }
-        if (!maxUpdated || new Date(brief.updated_at) > new Date(maxUpdated)) maxUpdated = brief.updated_at;
-
-        // fresh-чтение перед решением: лейблы могли смениться после выборки
-        const issue = await gh.getIssue(repo, brief.number);
-        const state = stateOf(issue.labels);
-        const d = decide(state);
-        if (!d) continue;
-
-        if (d.action === 'review') {
-          await handleReview(repo, issue, day);
-          continue;
-        }
-
-        // label-first: сначала переход, потом роль; optimistic skip при гонке
-        if (d.from !== d.to) {
-          const t = await gh.transitionState(repo, issue.number, d.from, d.to);
-          if (t.skipped) {
-            keeper.append({ type: 'race-skip', repo, issue: issue.number, current: t.current });
+        let maxUpdated = cursor;
+        // Пол курсора: min(updated_at) по упавшим и скипнутым (кулдаун, cap-break)
+        // issue пачки. Без него успех более НОВОГО issue уводит setCursor вперёд, и
+        // не-review задача навсегда выпадает из since-окна (по лейблу перевыбирается
+        // только review) — тихая потеря задачи.
+        let floorUpdated = null;
+        const holdCursor = (b) => {
+          if (!floorUpdated || new Date(b.updated_at) < new Date(floorUpdated)) floorUpdated = b.updated_at;
+        };
+        const briefList = [...byNumber.values()];
+        for (let i = 0; i < briefList.length; i++) {
+          const brief = briefList[i];
+          // Дневной кап перепроверяется на каждой задаче: одна tick-пачка
+          // не должна прошивать лимит насквозь
+          if (keeper.costForDay(day) >= config.cost_cap_usd_per_day) {
+            // Всё необработанное (включая текущий) обязано остаться в since-окне.
+            for (let j = i; j < briefList.length; j++) holdCursor(briefList[j]);
+            keeper.append({ type: 'daily-cap-pause', day });
+            notify('daily-cap', `дневной кап $${config.cost_cap_usd_per_day} исчерпан посреди tick (${day})`);
+            break;
+          }
+          const ikey = `${repo}#${brief.number}`;
+          const prevErr = issueErrors.get(ikey);
+          // Кулдаун проверяется ДО getIssue: скип не стоит ни одного API-вызова
+          // и не запускает LLM-роли.
+          if (prevErr && now() < prevErr.nextRetryAt) {
+            holdCursor(brief);
             continue;
           }
+          try {
+            await processIssue(repo, brief, day);
+            if (prevErr) {
+              if (prevErr.consecutive >= 2) {
+                keeper.append({ type: 'issue-recovered', repo, issue: brief.number, consecutive: prevErr.consecutive, error: prevErr.error });
+              }
+              issueErrors.delete(ikey);
+            }
+            if (!maxUpdated || new Date(brief.updated_at) > new Date(maxUpdated)) maxUpdated = brief.updated_at;
+          } catch (e) {
+            const consecutive = (prevErr?.consecutive ?? 0) + 1;
+            issueErrors.set(ikey, { consecutive, nextRetryAt: now() + retryCooldownMs(consecutive), error: scrub(e.message) });
+            holdCursor(brief);
+            log(`issue error ${ikey}: ${scrub(e.message)}`);
+            keeper.append({ type: 'issue-error', repo, issue: brief.number, error: scrub(e.message), consecutive });
+            // Sentry-канал: до изоляции эти ошибки долетали через notify('tick-error');
+            // изоляция не должна делать их невидимыми для Sentry. Частота ограничена
+            // кулдауном ретрая.
+            notify('issue-error', `${ikey}: ${scrub(e.message)}`);
+          }
         }
-        const roleFn = { plan: roles.plan, work: roles.work }[d.action];
-        const res = await roleFn({ repo, issue, day });
-        keeper.append({ type: 'action', action: d.action, repo, issue: issue.number, result: res?.status });
+        // Курсор = max по успешным, но не дальше самого старого упавшего/скипнутого
+        // (тот остаётся в since-окне и переживает рестарт: счётчики in-memory, выборка
+        // вернёт). Назад за прежний курсор не откатываем: issue, пришедший из
+        // overlap/label-выборки, в окне и так.
+        let nextCursor = maxUpdated;
+        if (floorUpdated && nextCursor && new Date(floorUpdated) < new Date(nextCursor)) nextCursor = floorUpdated;
+        if (nextCursor && cursor && new Date(nextCursor) < new Date(cursor)) nextCursor = cursor;
+        if (nextCursor) keeper.setCursor(repo, nextCursor);
+        // Записи об issue, исчезнувших из выборки (закрыт/уведён человеком во время
+        // серии ошибок), чистим — иначе живут до рестарта, а вернувшийся issue
+        // продолжил бы чужую серию.
+        for (const key of issueErrors.keys()) {
+          if (key.startsWith(`${repo}#`) && !byNumber.has(Number(key.slice(repo.length + 1)))) {
+            issueErrors.delete(key);
+          }
+        }
+        const prevRepoErr = repoErrors.get(repo);
+        if (prevRepoErr) {
+          if (prevRepoErr.consecutive >= 2) {
+            keeper.append({ type: 'repo-recovered', repo, consecutive: prevRepoErr.consecutive, error: prevRepoErr.error });
+          }
+          repoErrors.delete(repo);
+        }
+      } catch (e) {
+        const consecutive = (repoErrors.get(repo)?.consecutive ?? 0) + 1;
+        repoErrors.set(repo, { consecutive, error: scrub(e.message) });
+        log(`repo error ${repo}: ${scrub(e.message)}`);
+        keeper.append({ type: 'repo-error', repo, error: scrub(e.message), consecutive });
+        notify('repo-error', `${repo}: ${scrub(e.message)}`);
       }
-      if (maxUpdated) keeper.setCursor(repo, maxUpdated);
     }
+  }
+
+  // Обработка одной задачи; любой не-throw исход (включая скипы) = успех для
+  // курсора и сброса счётчика ошибок.
+  async function processIssue(repo, brief, day) {
+    // fresh-чтение перед решением: лейблы могли смениться после выборки
+    const issue = await gh.getIssue(repo, brief.number);
+    const state = stateOf(issue.labels);
+    const d = decide(state);
+    if (!d) return;
+
+    if (d.action === 'review') {
+      await handleReview(repo, issue, day);
+      return;
+    }
+
+    // label-first: сначала переход, потом роль; optimistic skip при гонке
+    if (d.from !== d.to) {
+      const t = await gh.transitionState(repo, issue.number, d.from, d.to);
+      if (t.skipped) {
+        keeper.append({ type: 'race-skip', repo, issue: issue.number, current: t.current });
+        return;
+      }
+    }
+    const roleFn = { plan: roles.plan, work: roles.work }[d.action];
+    const res = await roleFn({ repo, issue, day });
+    keeper.append({ type: 'action', action: d.action, repo, issue: issue.number, result: res?.status });
   }
 
   return {
