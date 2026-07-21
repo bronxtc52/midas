@@ -93,6 +93,47 @@ test('createPR и getCheckRuns: green/red/pending', async () => {
   assert.equal(await gh.checksStatus('o/r', 'abc'), 'none', 'нет чеков = none (решает демон по возрасту PR)');
 });
 
+// 403 от Checks API (скрытое право checks:read не распространяется на репо,
+// добавленные в fine-grained PAT после выпуска) → фолбэк на Actions API
+test('checksStatus: 403 check-runs → фолбэк на /actions/runs по head_sha', async () => {
+  const mk = (workflowRuns) => fakeFetch([
+    { match: (u) => u.includes('/check-runs'), res: { status: 403, json: { message: 'Resource not accessible by personal access token' } } },
+    { match: (u) => u.includes('/actions/runs?') || u.includes('/actions/runs&'), res: { status: 200, json: { workflow_runs: workflowRuns } } },
+  ]);
+  let f = mk([{ status: 'completed', conclusion: 'success' }]);
+  assert.equal(await makeGh({ token: 't', fetchImpl: f.impl }).checksStatus('o/r', 'abc'), 'green');
+  assert.match(f.calls.at(-1).url, /head_sha=abc/, 'Actions-фолбэк фильтрует по head_sha');
+  f = mk([{ status: 'completed', conclusion: 'failure' }]);
+  assert.equal(await makeGh({ token: 't', fetchImpl: f.impl }).checksStatus('o/r', 'abc'), 'red');
+  f = mk([{ status: 'in_progress', conclusion: null }]);
+  assert.equal(await makeGh({ token: 't', fetchImpl: f.impl }).checksStatus('o/r', 'abc'), 'pending');
+  f = mk([]);
+  assert.equal(await makeGh({ token: 't', fetchImpl: f.impl }).checksStatus('o/r', 'abc'), 'none');
+});
+
+test('checksStatus: не-403 ошибка check-runs НЕ маскируется фолбэком', async () => {
+  const { impl } = fakeFetch([
+    { match: (u) => u.includes('/check-runs'), res: { status: 500, json: {} } },
+  ]);
+  await assert.rejects(() => makeGh({ token: 't', fetchImpl: impl }).checksStatus('o/r', 'abc'), /500/);
+});
+
+test('failedChecks: 403 → красные Actions-раны разворачиваются в упавшие jobs (id job годен для лога)', async () => {
+  const { impl } = fakeFetch([
+    { match: (u) => u.includes('/check-runs'), res: { status: 403, json: {} } },
+    { match: (u) => u.includes('/actions/runs?') || /actions\/runs\?/.test(u), res: { status: 200, json: { workflow_runs: [
+      { id: 11, name: 'tests', status: 'completed', conclusion: 'failure' },
+      { id: 12, name: 'deploy', status: 'completed', conclusion: 'success' },
+    ] } } },
+    { match: (u) => u.includes('/actions/runs/11/jobs'), res: { status: 200, json: { jobs: [
+      { id: 111, name: 'pipeline', conclusion: 'failure' },
+      { id: 112, name: 'web', conclusion: 'success' },
+    ] } } },
+  ]);
+  const out = await makeGh({ token: 't', fetchImpl: impl }).failedChecks('o/r', 'abc');
+  assert.deepEqual(out, [{ name: 'tests / pipeline', summary: '', id: 111 }]);
+});
+
 test('getDefaultBranch: возвращает default_branch из GET /repos/{repo}', async () => {
   const { impl, calls } = fakeFetch([
     { match: (u, m) => m === 'GET' && /\/repos\/o\/r$/.test(u), res: { status: 200, json: { default_branch: 'master' } } },

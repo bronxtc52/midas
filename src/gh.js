@@ -38,6 +38,16 @@ export function makeGh({
     return s.toString() ? `?${s}` : '';
   };
 
+  // 403 без исчерпанного rate-limit = нет права (request ретраит только rate-limit)
+  const isForbidden = (e) => String(e && e.message).includes('→ 403');
+
+  // Actions-эквивалент check-runs: workflow-раны по head_sha; поля status/conclusion
+  // совместимы с бакет-логикой checksStatus (queued/in_progress/completed + conclusion)
+  async function actionsRuns(repo, ref) {
+    const data = await request(`/repos/${repo}/actions/runs${q({ head_sha: ref, per_page: '100' })}`);
+    return data.workflow_runs ?? [];
+  }
+
   // Дефолт-ветка репо кэшируется процессно: разные репо флота на master vs main,
   // а сама дефолт-ветка меняется крайне редко → одного запроса на репо достаточно.
   const defaultBranchCache = new Map();
@@ -123,9 +133,20 @@ export function makeGh({
 
     // green | red | pending | none. «none» решает демон: свежий PR — ждать
     // (Actions регистрирует чеки с лагом), старый — репо без CI, пропускаем.
+    // Checks API может отдать 403 на репо, добавленном в fine-grained PAT после
+    // выпуска токена: право checks:read скрыто из UI GitHub и на новые репо не
+    // распространяется (наблюдалось живьём 2026-07-21: midas 200, server-watchdog
+    // и businessman 403 одним токеном; вернуть право в UI владелец не может).
+    // Весь CI флота — GitHub Actions, поэтому фолбэк на Actions API эквивалентен.
     async checksStatus(repo, ref) {
-      const data = await request(`/repos/${repo}/commits/${ref}/check-runs${q({ per_page: '100' })}`);
-      const runs = data.check_runs ?? [];
+      let runs;
+      try {
+        const data = await request(`/repos/${repo}/commits/${ref}/check-runs${q({ per_page: '100' })}`);
+        runs = data.check_runs ?? [];
+      } catch (e) {
+        if (!isForbidden(e)) throw e;
+        runs = await actionsRuns(repo, ref);
+      }
       if (runs.length === 0) return 'none';
       const bad = runs.some((r) => r.status === 'completed' && !['success', 'neutral', 'skipped'].includes(r.conclusion));
       if (bad) return 'red';
@@ -137,9 +158,28 @@ export function makeGh({
     // ЧТО красное. Тот же check-runs-запрос, что и checksStatus, но фильтр — только
     // завершённые с плохим conclusion (не success/neutral/skipped). summary — из
     // output.summary/output.title. id — для best-effort лога (см. failedCheckLog).
+    // На 403 — тот же Actions-фолбэк: упавшие jobs красных ранов; id job'а напрямую
+    // валиден для failedCheckLog (/actions/jobs/{id}/logs).
     async failedChecks(repo, ref) {
-      const data = await request(`/repos/${repo}/commits/${ref}/check-runs${q({ per_page: '100' })}`);
-      const runs = data.check_runs ?? [];
+      let runs;
+      try {
+        const data = await request(`/repos/${repo}/commits/${ref}/check-runs${q({ per_page: '100' })}`);
+        runs = data.check_runs ?? [];
+      } catch (e) {
+        if (!isForbidden(e)) throw e;
+        const badRuns = (await actionsRuns(repo, ref))
+          .filter((r) => r.status === 'completed' && !['success', 'neutral', 'skipped'].includes(r.conclusion));
+        const out = [];
+        for (const run of badRuns) {
+          const jobs = (await request(`/repos/${repo}/actions/runs/${run.id}/jobs${q({ per_page: '100' })}`)).jobs ?? [];
+          const badJobs = jobs.filter((j) => j.conclusion && !['success', 'neutral', 'skipped'].includes(j.conclusion));
+          for (const j of badJobs) out.push({ name: `${run.name} / ${j.name}`, summary: '', id: j.id });
+          // ран красный, а упавший job не распознан — отдаём сам ран (лог недостижим,
+          // failedCheckLog деградирует в '')
+          if (badJobs.length === 0) out.push({ name: run.name, summary: '', id: 0 });
+        }
+        return out;
+      }
       return runs
         .filter((r) => r.status === 'completed' && !['success', 'neutral', 'skipped'].includes(r.conclusion))
         .map((r) => ({ name: r.name, summary: (r.output && (r.output.summary || r.output.title)) || '', id: r.id }));
