@@ -95,6 +95,27 @@ export function eventToMessage(event, { monUrl = 'https://mon.adarasoft.com', re
       if (!(typeof event.consecutive === 'number' && event.consecutive >= 2)) return null;
       return `✅ MIDAS восстановился (было ${event.consecutive} ошибок подряд, последняя: ${event.error})`;
 
+    case 'issue-error': {
+      // Изоляция tick: сломанная задача больше не валит конвейер, но и не должна
+      // ломаться беззвучно — тот же бэкофф степеней двойки, что у tick-error.
+      // Одиночный транзиент (consecutive=1) ретраится следующим тиком — молчим.
+      if (!isPowerOfTwo(event.consecutive)) return null;
+      return `❗ MIDAS: ошибка задачи ${event.repo}#${event.issue} (${event.consecutive}-я подряд), остальной конвейер работает: ${event.error}`;
+    }
+
+    case 'repo-error': {
+      if (!isPowerOfTwo(event.consecutive)) return null;
+      return `❗ MIDAS: ошибка выборки репо ${event.repo} (${event.consecutive}-я подряд), остальные репо работают: ${event.error}`;
+    }
+
+    case 'issue-recovered':
+      if (!(typeof event.consecutive === 'number' && event.consecutive >= 2)) return null;
+      return `✅ MIDAS: задача ${event.repo}#${event.issue} снова обрабатывается (было ${event.consecutive} ошибок подряд, последняя: ${event.error})`;
+
+    case 'repo-recovered':
+      if (!(typeof event.consecutive === 'number' && event.consecutive >= 2)) return null;
+      return `✅ MIDAS: репо ${event.repo} снова обрабатывается (было ${event.consecutive} ошибок подряд, последняя: ${event.error})`;
+
     case 'action': {
       // Переходы конвейера. awaiting-approval — через спец-событие (дубля не даём);
       // review-исход (work-done) уже сообщён отдельным событием.
